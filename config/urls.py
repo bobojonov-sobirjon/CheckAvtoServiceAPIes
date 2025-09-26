@@ -13,13 +13,14 @@ schema_view: get_schema_view = get_schema_view(
     openapi.Info(
         title="Check Avto APIs",
         default_version='v1',
-        description="Check Avto Apies",
+        description="Check Avto Apies - JWT Authentication Required",
         terms_of_service="https://www.google.com/policies/terms/",
         contact=openapi.Contact(email="contact@snippets.local"),
         license=openapi.License(name="BSD License"),
     ),
     public=True,
     permission_classes=[permissions.AllowAny],
+    authentication_classes=[],
 )
 
 urlpatterns = [
@@ -34,6 +35,8 @@ urlpatterns += [
 
 urlpatterns += [
     path('api/auth/', include('apps.accounts.urls')),
+    path('api/car/', include('apps.car.urls')),
+    path('api/master/', include('apps.master.urls')),
 ]
 
 urlpatterns += static(settings.STATIC_URL, document_root=settings.STATIC_ROOT)

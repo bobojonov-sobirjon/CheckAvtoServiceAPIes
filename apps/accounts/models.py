@@ -69,3 +69,5 @@ class CustomUser(AbstractUser):
         Return the short name for the user.
         """
         return self.first_name if self.first_name else self.email
+
+

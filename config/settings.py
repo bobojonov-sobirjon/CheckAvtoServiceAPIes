@@ -31,6 +31,8 @@ ALLOWED_HOSTS = ["*"]
 
 LOCAL_APPS = [
     'apps.accounts',
+    'apps.car',
+    'apps.master',
 ]
 
 THIRD_PARTY_APPS = [
@@ -169,7 +171,6 @@ REST_FRAMEWORK = {
     'DEFAULT_PERMISSION_CLASSES': [
         'rest_framework.permissions.IsAuthenticated',
     ],
-    'EXCEPTION_HANDLER': 'config.exceptions.custom_exception_handler',
     "PAGE_SIZE": 100,
     'DEFAULT_PAGINATION_CLASS': 'rest_framework.pagination.LimitOffsetPagination',
 }
@@ -214,6 +215,35 @@ EMAIL_HOST_PASSWORD = 'harntaefuxuvlqqw'
 DEFAULT_FROM_EMAIL = 'sobirbobojonov2000@gmail.com'
 
 # SMSC.ru SMS xizmati sozlamalari
-SMSC_LOGIN = 'sobirjon_0576'  # SMSC.ru login
-SMSC_PASSWORD = '05769452Sobir@#'  # SMSC.ru parol
+# SMSC_LOGIN = 'sobirjon_0576'  # SMSC.ru login
+# SMSC_PASSWORD = '05769452Sobir@#'  # SMSC.ru parol
+SMSC_LOGIN = 'Check8Auto'  # SMSC.ru login
+SMSC_PASSWORD = '8Check8Auto8'  # SMSC.ru parol
 SMSC_API_URL = 'https://smsc.ru/sys/send.php'
+
+# Swagger JWT Configuration
+SWAGGER_SETTINGS = {
+    'SECURITY_DEFINITIONS': {
+        'Bearer': {
+            'type': 'apiKey',
+            'name': 'Authorization',
+            'in': 'header',
+            'description': 'JWT Authorization header using the Bearer scheme. Example: "Authorization: Bearer {token}"'
+        }
+    },
+    'USE_SESSION_AUTH': False,
+    'JSON_EDITOR': True,
+    'SUPPORTED_SUBMIT_METHODS': [
+        'get',
+        'post',
+        'put',
+        'delete',
+        'patch'
+    ],
+    'OPERATIONS_SORTER': 'alpha',
+    'TAGS_SORTER': 'alpha',
+    'DOC_EXPANSION': 'none',
+    'DEEP_LINKING': True,
+    'SHOW_EXTENSIONS': True,
+    'SHOW_COMMON_EXTENSIONS': True,
+}
