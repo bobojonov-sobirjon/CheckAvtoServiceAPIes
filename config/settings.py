@@ -237,23 +237,20 @@ LOGGING = {
     'disable_existing_loggers': False,
     'handlers': {
         'file': {
-            'level': 'INFO',
+            'level': 'DEBUG',
             'class': 'logging.FileHandler',
-            'filename': 'sms.log',
-        },
-        'console': {
-            'level': 'INFO',
-            'class': 'logging.StreamHandler',
+            'filename': BASE_DIR / 'logs/django.log',
         },
     },
     'loggers': {
-        'apps.accounts.services': {
-            'handlers': ['file', 'console'],
-            'level': 'INFO',
+        'django': {
+            'handlers': ['file'],
+            'level': 'DEBUG',
             'propagate': True,
         },
     },
 }
+
 
 # Cache configuration
 CACHES = {
