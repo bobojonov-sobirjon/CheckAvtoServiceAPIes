@@ -28,13 +28,16 @@ class Custom404Middleware:
     def __call__(self, request):
         # Get the response from the view function
         response = self.get_response(request)
-        if response is None:
-            # If response is None, handle 404 error
-            return self.handle_404(request)
+        
+        # Only handle 404 for non-API requests
+        if not request.path.startswith('/api/'):
+            if response is None:
+                # If response is None, handle 404 error
+                return self.handle_404(request)
 
-        if response.status_code == status.HTTP_404_NOT_FOUND:
-            # If response status is 404, handle 404 error
-            return self.handle_404(request)
+            if response.status_code == status.HTTP_404_NOT_FOUND:
+                # If response status is 404, handle 404 error
+                return self.handle_404(request)
 
         return response
 

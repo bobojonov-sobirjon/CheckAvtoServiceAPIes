@@ -33,6 +33,7 @@ LOCAL_APPS = [
     'apps.accounts',
     'apps.car',
     'apps.master',
+    'apps.order',
 ]
 
 THIRD_PARTY_APPS = [
@@ -221,14 +222,63 @@ SMSC_LOGIN = 'Check8Auto'  # SMSC.ru login
 SMSC_PASSWORD = '8Check8Auto8'  # SMSC.ru parol
 SMSC_API_URL = 'https://smsc.ru/sys/send.php'
 
+# SMS сервис настройки
+SMS_SERVICE = 'smsc'  # Основной SMS сервис
+SMS_FALLBACK_SERVICE = 'smsc'  # Резервный SMS сервис
+
+# Альтернативные SMS сервисы (для будущего использования)
+# SMS_RU_LOGIN = 'your-sms-ru-login'
+# SMS_RU_PASSWORD = 'your-sms-ru-password'
+# SMS_RU_API_URL = 'https://sms.ru/sms/send'
+
+# Логирование SMS
+LOGGING = {
+    'version': 1,
+    'disable_existing_loggers': False,
+    'handlers': {
+        'file': {
+            'level': 'INFO',
+            'class': 'logging.FileHandler',
+            'filename': 'sms.log',
+        },
+        'console': {
+            'level': 'INFO',
+            'class': 'logging.StreamHandler',
+        },
+    },
+    'loggers': {
+        'apps.accounts.services': {
+            'handlers': ['file', 'console'],
+            'level': 'INFO',
+            'propagate': True,
+        },
+    },
+}
+
+# Cache configuration
+CACHES = {
+    'default': {
+        'BACKEND': 'django.core.cache.backends.locmem.LocMemCache',
+        'LOCATION': 'unique-snowflake',
+        'OPTIONS': {
+            'MAX_ENTRIES': 1000,
+            'CULL_FREQUENCY': 3,
+        }
+    }
+}
+
 # Swagger JWT Configuration
 SWAGGER_SETTINGS = {
     'SECURITY_DEFINITIONS': {
-        'Bearer': {
-            'type': 'apiKey',
-            'name': 'Authorization',
-            'in': 'header',
-            'description': 'JWT Authorization header using the Bearer scheme. Example: "Authorization: Bearer {token}"'
+        'OAuth2': {
+            'type': 'oauth2',
+            'authorizationUrl': '',
+            'tokenUrl': '/api/auth/oauth/token/',
+            'flow': 'password',
+            'scopes': {
+                'read': 'Read access',
+                'write': 'Write access'
+            }
         }
     },
     'USE_SESSION_AUTH': False,
@@ -246,4 +296,15 @@ SWAGGER_SETTINGS = {
     'DEEP_LINKING': True,
     'SHOW_EXTENSIONS': True,
     'SHOW_COMMON_EXTENSIONS': True,
+    'OAUTH2_REDIRECT_URL': 'http://localhost:8000/swagger/',
+    'OAUTH2_CONFIG': {
+        'clientId': 'swagger',
+        'clientSecret': 'swagger-secret',
+        'realm': 'swagger',
+        'appName': 'Check Avto API',
+        'scopeSeparator': ' ',
+        'additionalQueryStringParams': {},
+        'useBasicAuthenticationWithAccessCodeGrant': False,
+        'usePkceWithAuthorizationCodeGrant': False
+    }
 }

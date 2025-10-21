@@ -1,16 +1,11 @@
 from django.contrib import admin
 from django import forms
-from .models import Master, ServiceType
+from .models import Master, ServiceType, MasterService
 
 
 class MasterAdminForm(forms.ModelForm):
-    """Форма для мастера с множественным выбором услуг"""
-    services = forms.MultipleChoiceField(
-        choices=ServiceType.choices,
-        widget=forms.CheckboxSelectMultiple,
-        required=False,
-        label='Предоставляемые услуги'
-    )
+    """Форма для мастера"""
+    # services field removed - now handled by MasterService model
     
     class Meta:
         model = Master
@@ -18,15 +13,21 @@ class MasterAdminForm(forms.ModelForm):
     
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        if self.instance and self.instance.pk:
-            self.fields['services'].initial = self.instance.services
+        # services field removed - now handled by MasterService model
     
     def save(self, commit=True):
         instance = super().save(commit=False)
-        instance.services = self.cleaned_data.get('services', [])
         if commit:
             instance.save()
         return instance
+
+
+class MasterServiceInline(admin.TabularInline):
+    """Инлайн для услуг мастера"""
+    model = MasterService
+    extra = 1
+    fields = ['name', 'price_from', 'price_to']
+    ordering = ['name']
 
 
 @admin.register(Master)
@@ -45,24 +46,25 @@ class MasterAdmin(admin.ModelAdmin):
         'city'
     ]
     ordering = ['-created_at']
+    inlines = [MasterServiceInline]
     
     fieldsets = (
         ('Пользователь', {
-            'fields': ('user',)
+            'fields': ('service_type', 'user',)
         }),
         ('Местоположение', {
-            'fields': ('city',)
+            'fields': ('city', 'address', 'latitude', 'longitude')
         }),
-        ('Услуги', {
-            'fields': ('services',),
-            'description': 'Выберите услуги, которые предоставляет мастер'
+        ('Контактная информация', {
+            'fields': ('phone', 'working_time')
         }),
+        # Services section removed - now handled by MasterService model
         ('Банковские данные', {
             'fields': ('card_number', 'card_expiry_month', 'card_expiry_year', 'card_cvv'),
             'classes': ('collapse',)
         }),
         ('Финансы', {
-            'fields': ('reserved_amount',),
+            'fields': ('balance',),
             'classes': ('collapse',)
         }),
         ('Временные метки', {
@@ -83,5 +85,7 @@ class MasterAdmin(admin.ModelAdmin):
     
     def services_display(self, obj):
         """Отображение услуг в списке"""
-        return ', '.join(obj.get_services_display())
+        from .models import MasterService
+        master_services = MasterService.objects.filter(master=obj)
+        return ', '.join([service.name for service in master_services])
     services_display.short_description = 'Услуги'

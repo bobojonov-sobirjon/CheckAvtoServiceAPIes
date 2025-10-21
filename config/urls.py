@@ -8,6 +8,7 @@ from drf_yasg import openapi
 from drf_yasg.views import get_schema_view
 
 from rest_framework import permissions
+from config.swagger_auth import SwaggerTokenView
 
 schema_view: get_schema_view = get_schema_view(
     openapi.Info(
@@ -35,8 +36,10 @@ urlpatterns += [
 
 urlpatterns += [
     path('api/auth/', include('apps.accounts.urls')),
+    path('api/auth/oauth/token/', SwaggerTokenView.as_view(), name='swagger-oauth-token'),
     path('api/car/', include('apps.car.urls')),
     path('api/master/', include('apps.master.urls')),
+    path('api/order/', include('apps.order.urls')),
 ]
 
 urlpatterns += static(settings.STATIC_URL, document_root=settings.STATIC_ROOT)
