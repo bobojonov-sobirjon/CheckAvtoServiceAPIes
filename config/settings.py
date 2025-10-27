@@ -260,6 +260,9 @@ LOGGING = {
 # Use appropriate cache backend based on environment
 import os as cache_os
 
+# Check if running in production (DEBUG=False means production)
+IS_PRODUCTION = not DEBUG
+
 if cache_os.environ.get('USE_REDIS_CACHE', 'False').lower() == 'true':
     # Production: Redis cache (best for multiple workers)
     try:
@@ -286,8 +289,9 @@ if cache_os.environ.get('USE_REDIS_CACHE', 'False').lower() == 'true':
                 'TIMEOUT': 300,
             }
         }
-elif cache_os.environ.get('USE_DB_CACHE', 'False').lower() == 'true':
+elif cache_os.environ.get('USE_DB_CACHE', 'False').lower() == 'true' or IS_PRODUCTION:
     # Production: Database cache (shared across all workers, simpler setup)
+    # Also use this as default for production to avoid issues
     CACHES = {
         'default': {
             'BACKEND': 'django.core.cache.backends.db.DatabaseCache',
