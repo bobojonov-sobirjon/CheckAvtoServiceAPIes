@@ -262,17 +262,30 @@ import os as cache_os
 
 if cache_os.environ.get('USE_REDIS_CACHE', 'False').lower() == 'true':
     # Production: Redis cache (best for multiple workers)
-    CACHES = {
-        'default': {
-            'BACKEND': 'django.core.cache.backends.redis.RedisCache',
-            'LOCATION': os.getenv('REDIS_URL', 'redis://127.0.0.1:6379/1'),
-            'OPTIONS': {
-                'CLIENT_CLASS': 'django_redis.client.DefaultClient',
-            },
-            'KEY_PREFIX': 'checkavto',
-            'TIMEOUT': 300,
+    try:
+        # Try with django-redis (if installed)
+        import django_redis
+        CACHES = {
+            'default': {
+                'BACKEND': 'django.core.cache.backends.redis.RedisCache',
+                'LOCATION': os.getenv('REDIS_URL', 'redis://127.0.0.1:6379/1'),
+                'OPTIONS': {
+                    'CLIENT_CLASS': 'django_redis.client.DefaultClient',
+                },
+                'KEY_PREFIX': 'checkavto',
+                'TIMEOUT': 300,
+            }
         }
-    }
+    except ImportError:
+        # Fallback to basic Redis cache without CLIENT_CLASS
+        CACHES = {
+            'default': {
+                'BACKEND': 'django.core.cache.backends.redis.RedisCache',
+                'LOCATION': os.getenv('REDIS_URL', 'redis://127.0.0.1:6379/1'),
+                'KEY_PREFIX': 'checkavto',
+                'TIMEOUT': 300,
+            }
+        }
 elif cache_os.environ.get('USE_DB_CACHE', 'False').lower() == 'true':
     # Production: Database cache (shared across all workers, simpler setup)
     CACHES = {
