@@ -9,9 +9,12 @@ from django.core.cache import cache
 from django.contrib.auth import get_user_model
 from django.contrib.auth.models import Group
 from django.core.mail import send_mail
+from django.utils import timezone
+from datetime import timedelta
 from rest_framework_simplejwt.tokens import RefreshToken
 from rest_framework import status
 from rest_framework.response import Response
+from .models import UserSMSCode
 
 # Настройка логирования
 logger = logging.getLogger(__name__)
@@ -268,7 +271,37 @@ class SMSService:
                     # В тестовом режиме просто логируем
                     logger.info(f"Test mode: SMS code {sms_code} would be sent to {formatted_phone}")
             
-            # Сохранение кода в кэше на 5 минут
+            # Mark old codes for this identifier as used
+            UserSMSCode.objects.filter(
+                identifier=identifier,
+                identifier_type=identifier_type,
+                is_used=False
+            ).update(is_used=True, used_at=timezone.now())
+            
+            # Save the new SMS code to database
+            expires_at = timezone.now() + timedelta(minutes=5)
+            
+            # Try to find the user who requested the code (for created_by tracking)
+            created_by_user = None
+            if user_exists:
+                try:
+                    if identifier_type == 'phone':
+                        created_by_user = User.objects.get(phone_number=identifier)
+                    else:  # email
+                        created_by_user = User.objects.get(email=identifier)
+                except User.DoesNotExist:
+                    pass
+            
+            # Create new SMS code entry
+            UserSMSCode.objects.create(
+                code=sms_code,
+                identifier=identifier,
+                identifier_type=identifier_type,
+                created_by=created_by_user if created_by_user else None,
+                expires_at=expires_at
+            )
+            
+            # Also keep in Redis cache for faster lookups
             cache_key = f'sms_code_{identifier_type}_{identifier}'
             cache.set(cache_key, sms_code, timeout=300)
             
@@ -338,24 +371,54 @@ class SMSService:
                     'status_code': status.HTTP_400_BAD_REQUEST
                 }
             
-            # Получение кода из кэша
-            cache_key = f'sms_code_{identifier_type}_{identifier}'
-            stored_code = cache.get(cache_key)
-            
-            if not stored_code:
-                return {
-                    'success': False,
-                    'error': 'Срок действия SMS кода истек или код не найден',
-                    'status_code': status.HTTP_400_BAD_REQUEST
-                }
-            
-            # Проверка кода
-            if stored_code != sms_code:
-                return {
-                    'success': False,
-                    'error': 'Неверный SMS код',
-                    'status_code': status.HTTP_400_BAD_REQUEST
-                }
+            # Get code from database (primary source)
+            try:
+                sms_code_obj = UserSMSCode.objects.filter(
+                    identifier=identifier,
+                    identifier_type=identifier_type,
+                    code=sms_code,
+                    is_used=False
+                ).order_by('-created_at').first()
+                
+                if not sms_code_obj:
+                    # Try cache as fallback
+                    cache_key = f'sms_code_{identifier_type}_{identifier}'
+                    stored_code = cache.get(cache_key)
+                    
+                    if not stored_code or stored_code != sms_code:
+                        return {
+                            'success': False,
+                            'error': 'Срок действия SMS кода истек или код не найден',
+                            'status_code': status.HTTP_400_BAD_REQUEST
+                        }
+                else:
+                    # Check if code is expired
+                    if sms_code_obj.is_expired():
+                        return {
+                            'success': False,
+                            'error': 'Срок действия SMS кода истек',
+                            'status_code': status.HTTP_400_BAD_REQUEST
+                        }
+                    
+                    # Mark code as used
+                    sms_code_obj.mark_as_used()
+                    
+                    # Log the verification with created_by information
+                    created_by_info = f" (создан пользователем: {sms_code_obj.created_by})" if sms_code_obj.created_by else " (создан для нового пользователя)"
+                    logger.info(f"SMS code verified for {identifier}{created_by_info}")
+                    
+            except Exception as e:
+                logger.error(f"Error verifying SMS code: {str(e)}")
+                # Fallback to cache
+                cache_key = f'sms_code_{identifier_type}_{identifier}'
+                stored_code = cache.get(cache_key)
+                
+                if not stored_code or stored_code != sms_code:
+                    return {
+                        'success': False,
+                        'error': 'Неверный SMS код',
+                        'status_code': status.HTTP_400_BAD_REQUEST
+                    }
             
             # Если код правильный, найти или создать пользователя
             # Проверка существования пользователя из кэша
@@ -467,12 +530,12 @@ class SMSService:
             refresh = RefreshToken.for_user(user)
             access_token = refresh.access_token
             
-            # Удаление кода из кэша
-            cache.delete(cache_key)
-            
-            # Очистка кэша
+            # Clear cache for user info and role
             cache.delete(f'user_exists_{identifier_type}_{identifier}')
             cache.delete(f'user_role_{identifier_type}_{identifier}')
+            # Also clear the SMS code from cache if it exists
+            cache_key = f'sms_code_{identifier_type}_{identifier}'
+            cache.delete(cache_key)
             
             return {
                 'success': True,
