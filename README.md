@@ -145,6 +145,46 @@ python manage.py runserver
 - **Swagger UI**: http://127.0.0.1:8000/swagger/
 - **ReDoc**: http://127.0.0.1:8000/redoc/
 
+## Production Setup (Server Configuration)
+
+### ⚠️ ВАЖНО: Cache Configuration для Production
+
+**Проблема:** Localda код работает, но на сервере SMS код не находится.
+
+**Причина:** Django работает с несколькими workers (Gunicorn), и `LocMemCache` не делится между процессами.
+
+**Решение:**
+
+1. **Database Cache (Простой вариант):**
+```bash
+# В .env файле на сервере:
+USE_DB_CACHE=True
+
+# Создать cache table:
+python manage.py createcachetable
+
+# Перезапустить сервер:
+sudo systemctl restart gunicorn
+```
+
+2. **Redis Cache (Рекомендуется):**
+```bash
+# Установить Redis:
+sudo apt install redis-server
+
+# В .env файле:
+USE_REDIS_CACHE=True
+REDIS_URL=redis://127.0.0.1:6379/1
+
+# Установить пакеты:
+pip install -r requirements.txt
+
+# Перезапустить сервер:
+sudo systemctl restart gunicorn
+```
+
+Подробности в файле `SERVERDA_NIMA_QILISH_KERAK.md`
+
 ## Настройка SMS сервиса
 
 ### SMSC.ru

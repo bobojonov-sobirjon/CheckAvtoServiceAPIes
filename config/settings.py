@@ -232,6 +232,10 @@ SMS_FALLBACK_SERVICE = 'smsc'  # Резервный SMS сервис
 # SMS_RU_API_URL = 'https://sms.ru/sms/send'
 
 # Логирование SMS
+# Ensure logs directory exists
+logs_dir = BASE_DIR / 'logs'
+logs_dir.mkdir(exist_ok=True)
+
 LOGGING = {
     'version': 1,
     'disable_existing_loggers': False,
@@ -253,16 +257,46 @@ LOGGING = {
 
 
 # Cache configuration
-CACHES = {
-    'default': {
-        'BACKEND': 'django.core.cache.backends.locmem.LocMemCache',
-        'LOCATION': 'unique-snowflake',
-        'OPTIONS': {
-            'MAX_ENTRIES': 1000,
-            'CULL_FREQUENCY': 3,
+# Use appropriate cache backend based on environment
+import os as cache_os
+
+if cache_os.environ.get('USE_REDIS_CACHE', 'False').lower() == 'true':
+    # Production: Redis cache (best for multiple workers)
+    CACHES = {
+        'default': {
+            'BACKEND': 'django.core.cache.backends.redis.RedisCache',
+            'LOCATION': os.getenv('REDIS_URL', 'redis://127.0.0.1:6379/1'),
+            'OPTIONS': {
+                'CLIENT_CLASS': 'django_redis.client.DefaultClient',
+            },
+            'KEY_PREFIX': 'checkavto',
+            'TIMEOUT': 300,
         }
     }
-}
+elif cache_os.environ.get('USE_DB_CACHE', 'False').lower() == 'true':
+    # Production: Database cache (shared across all workers, simpler setup)
+    CACHES = {
+        'default': {
+            'BACKEND': 'django.core.cache.backends.db.DatabaseCache',
+            'LOCATION': 'cache_table',
+            'OPTIONS': {
+                'MAX_ENTRIES': 1000,
+            },
+            'TIMEOUT': 300,
+        }
+    }
+else:
+    # Development: Local memory cache (for single process only - NOT for production with multiple workers!)
+    CACHES = {
+        'default': {
+            'BACKEND': 'django.core.cache.backends.locmem.LocMemCache',
+            'LOCATION': 'unique-snowflake',
+            'OPTIONS': {
+                'MAX_ENTRIES': 1000,
+                'CULL_FREQUENCY': 3,
+            }
+        }
+    }
 
 # Swagger JWT Configuration
 SWAGGER_SETTINGS = {
