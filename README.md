@@ -155,6 +155,10 @@ python manage.py runserver
 
 **Решение:**
 
+✅ **AUTO:** Production muhitida (DEBUG=False) DatabaseCache avtomatik ishlaydi! Hech qanday sozlash kerak emas.
+
+Yoki manual qilish:
+
 1. **Database Cache (Простой вариант):**
 ```bash
 # В .env файле на сервере:
@@ -167,7 +171,7 @@ python manage.py createcachetable
 sudo systemctl restart gunicorn
 ```
 
-2. **Redis Cache (Рекомендуется):**
+2. **Redis Cache (Рекомендуется для high load):**
 ```bash
 # Установить Redis:
 sudo apt install redis-server
