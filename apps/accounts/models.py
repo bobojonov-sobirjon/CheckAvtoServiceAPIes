@@ -169,3 +169,76 @@ class UserBalance(models.Model):
         return balance
 
 
+class UserSMSCode(models.Model):
+    """
+    Model for storing SMS codes with created_by tracking
+    """
+    code = models.CharField(
+        max_length=10,
+        verbose_name="SMS код",
+        help_text="Код подтверждения"
+    )
+    identifier = models.CharField(
+        max_length=255,
+        verbose_name="Идентификатор",
+        help_text="Номер телефона или email"
+    )
+    identifier_type = models.CharField(
+        max_length=10,
+        choices=[('phone', 'Телефон'), ('email', 'Email')],
+        verbose_name="Тип идентификатора",
+        help_text="Тип идентификатора: телефон или email"
+    )
+    created_by = models.ForeignKey(
+        CustomUser,
+        on_delete=models.CASCADE,
+        related_name='sms_codes',
+        null=True,
+        blank=True,
+        verbose_name="Создатель",
+        help_text="Пользователь, который запросил код (если зарегистрирован)"
+    )
+    created_at = models.DateTimeField(
+        auto_now_add=True,
+        verbose_name="Дата создания"
+    )
+    expires_at = models.DateTimeField(
+        verbose_name="Срок действия"
+    )
+    is_used = models.BooleanField(
+        default=False,
+        verbose_name="Использован",
+        help_text="Указывает, был ли код использован"
+    )
+    used_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        verbose_name="Дата использования"
+    )
+
+    class Meta:
+        verbose_name = "SMS код"
+        verbose_name_plural = "SMS коды"
+        ordering = ['-created_at']
+        indexes = [
+            models.Index(fields=['identifier', 'identifier_type']),
+            models.Index(fields=['code', 'identifier']),
+            models.Index(fields=['is_used', 'expires_at']),
+        ]
+
+    def __str__(self):
+        return f"SMS код {self.code} для {self.identifier}"
+
+    def is_expired(self):
+        """Проверяет, истек ли срок действия кода"""
+        from django.utils import timezone
+        return timezone.now() > self.expires_at
+
+    def mark_as_used(self):
+        """Помечает код как использованный"""
+        from django.utils import timezone
+        self.is_used = True
+        self.used_at = timezone.now()
+        self.save(update_fields=['is_used', 'used_at'])
+
+

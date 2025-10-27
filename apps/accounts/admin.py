@@ -1,7 +1,7 @@
 from django.contrib import admin
 from django.contrib.auth.admin import UserAdmin
 from django.contrib.sites.models import Site
-from .models import CustomUser, UserBalance
+from .models import CustomUser, UserBalance, UserSMSCode
 
 
 class UserBalanceInline(admin.StackedInline):
@@ -10,6 +10,16 @@ class UserBalanceInline(admin.StackedInline):
     extra = 0
     readonly_fields = ('created_at', 'updated_at')
     fields = ('amount', 'created_at', 'updated_at')
+
+
+class UserSMSCodeInline(admin.TabularInline):
+    """Inline для SMS кодов пользователя"""
+    model = UserSMSCode
+    extra = 0
+    readonly_fields = ('code', 'identifier', 'identifier_type', 'created_at', 'expires_at', 'is_used', 'used_at')
+    fields = ('code', 'identifier', 'identifier_type', 'created_at', 'expires_at', 'is_used', 'used_at')
+    can_delete = False
+    max_num = 0  # Display only, no editing
 
 
 @admin.register(CustomUser)
@@ -21,12 +31,12 @@ class CustomUserAdmin(UserAdmin):
     list_filter = ('is_verified', 'is_staff', 'is_superuser', 'is_active', 'created_at')
     search_fields = ('email', 'username', 'first_name', 'last_name', 'phone_number')
     ordering = ('-created_at',)
-    inlines = [UserBalanceInline]
+    inlines = [UserBalanceInline, UserSMSCodeInline]
     
     fieldsets = (
         (None, {'fields': ('username', 'password')}),
         ('Личная информация', {'fields': ('first_name', 'last_name', 'email', 'phone_number', 'date_of_birth', 'avatar')}),
-        ('Права доступа', {'fields': ('is_active', 'is_staff', 'is_superuser', 'groups', 'user_permissions')}),
+        ('Права доступа', {'fields': ('is_active', 'is_staff', 'is_superuser', 'groups')}),
         ('Важные даты', {'fields': ('last_login', 'date_joined', 'created_at', 'updated_at')}),
         ('Подтверждение', {'fields': ('is_verified',)}),
     )
@@ -53,6 +63,22 @@ class UserBalanceAdmin(admin.ModelAdmin):
     fieldsets = (
         (None, {'fields': ('user', 'amount')}),
         ('Даты', {'fields': ('created_at', 'updated_at')}),
+    )
+
+
+# @admin.register(UserSMSCode)
+class UserSMSCodeAdmin(admin.ModelAdmin):
+    """Админка для SMS кодов"""
+    list_display = ('code', 'identifier', 'identifier_type', 'created_by', 'is_used', 'created_at', 'expires_at')
+    list_filter = ('identifier_type', 'is_used', 'created_at', 'expires_at')
+    search_fields = ('code', 'identifier', 'created_by__email', 'created_by__username')
+    ordering = ('-created_at',)
+    readonly_fields = ('created_at', 'expires_at', 'used_at')
+    
+    fieldsets = (
+        (None, {'fields': ('code', 'identifier', 'identifier_type')}),
+        ('Пользователь', {'fields': ('created_by', 'is_used', 'used_at')}),
+        ('Даты', {'fields': ('created_at', 'expires_at')}),
     )
 
 
