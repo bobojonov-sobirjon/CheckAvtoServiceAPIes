@@ -1,7 +1,7 @@
 from rest_framework import serializers
 from django.core.exceptions import ValidationError
 import re
-from .models import CustomUser
+from .models import CustomUser, FAQ
 
 
 def validate_email_format(value):
@@ -68,9 +68,8 @@ class IdentifierSerializer(serializers.Serializer):
     identifier = serializers.CharField(max_length=255, required=True)
     role = serializers.ChoiceField(
         choices=['Driver', 'Master'],
-        required=False,
-        allow_blank=True,
-        help_text="Роль пользователя: Driver или Master. Обязательно только при создании нового пользователя."
+        required=True,
+        help_text="Роль пользователя: Driver или Master (обязательно)."
     )
     
     def validate_identifier(self, value):
@@ -117,9 +116,8 @@ class SMSVerificationSerializer(serializers.Serializer):
     sms_code = serializers.CharField(max_length=4, min_length=4, required=True)
     role = serializers.ChoiceField(
         choices=['Driver', 'Master'],
-        required=False,
-        allow_blank=True,
-        help_text="Роль пользователя: Driver или Master. Обязательно только при создании нового пользователя."
+        required=True,
+        help_text="Роль пользователя: Driver или Master (обязательно)."
     )
     
     def validate_identifier(self, value):
@@ -168,27 +166,27 @@ class SMSVerificationSerializer(serializers.Serializer):
 
 class UserSerializer(serializers.ModelSerializer):
     """Сериализатор для данных пользователя"""
-    role = serializers.SerializerMethodField()
+    roles = serializers.SerializerMethodField()
     
     class Meta:
         model = CustomUser
-        fields = ['id', 'phone_number', 'first_name', 'last_name', 'email', 'is_verified', 'created_at', 'role']
-        read_only_fields = ['id', 'created_at', 'role']
+        fields = ['id', 'phone_number', 'first_name', 'last_name', 'email', 'is_verified', 'created_at', 'roles']
+        read_only_fields = ['id', 'created_at', 'roles']
     
-    def get_role(self, obj):
-        """Получение роли пользователя"""
+    def get_roles(self, obj):
+        """Получение всех ролей пользователя"""
         # Check if obj is a model instance (not a dictionary)
         if hasattr(obj, 'groups'):
             try:
                 groups = obj.groups.all()
                 if groups.exists():
-                    return groups.first().name
+                    return [group.name for group in groups]
             except Exception as e:
                 # Log the error for debugging
                 import logging
                 logger = logging.getLogger(__name__)
-                logger.error(f"Error getting role for user {obj.id}: {str(e)}")
-        return None
+                logger.error(f"Error getting roles for user {obj.id}: {str(e)}")
+        return []
 
 
 class TokenResponseSerializer(serializers.Serializer):
@@ -214,138 +212,100 @@ class SMSResponseSerializer(serializers.Serializer):
 
 class UserDetailsSerializer(serializers.ModelSerializer):
     """Сериализатор для детальной информации о пользователе (только чтение)"""
-    role = serializers.SerializerMethodField()
+    roles = serializers.SerializerMethodField()
+    avatar = serializers.ImageField(use_url=True, read_only=True)
     
     class Meta:
         model = CustomUser
         fields = [
             'id', 'username', 'email', 'phone_number', 'first_name', 
             'last_name', 'date_of_birth', 'avatar', 'address', 
-            'longitude', 'latitude', 'is_verified', 'role',
+            'longitude', 'latitude', 'is_verified', 'roles',
             'created_at', 'updated_at'
         ]
         read_only_fields = [
-            'id', 'email', 'phone_number', 'is_verified', 'role',
+            'id', 'email', 'phone_number', 'is_verified', 'roles',
             'created_at', 'updated_at'
         ]
     
-    def get_role(self, obj):
-        """Получение роли пользователя"""
+    def get_roles(self, obj):
+        """Получение всех ролей пользователя"""
         # Check if obj is a model instance (not a dictionary)
         if hasattr(obj, 'groups'):
             try:
                 groups = obj.groups.all()
                 if groups.exists():
-                    return groups.first().name
+                    return [group.name for group in groups]
             except Exception as e:
                 # Log the error for debugging
                 import logging
                 logger = logging.getLogger(__name__)
-                logger.error(f"Error getting role for user {obj.id}: {str(e)}")
-        return None
+                logger.error(f"Error getting roles for user {obj.id}: {str(e)}")
+        return []
 
 
 class UserUpdateSerializer(serializers.ModelSerializer):
-    """Сериализатор для обновления информации о пользователе с условным обновлением email и phone_number"""
+    """Сериализатор для обновления информации о пользователе"""
+    avatar = serializers.ImageField(
+        use_url=True, 
+        required=False, 
+        allow_null=True,
+        help_text="Загрузите файл изображения для аватара"
+    )
+    roles = serializers.ListField(
+        child=serializers.ChoiceField(choices=['Driver', 'Master']),
+        required=False,
+        allow_empty=True,
+        write_only=True,
+        help_text="Список ролей пользователя (можно выбрать несколько): Driver, Master. Пример: ['Driver', 'Master']"
+    )
     
     class Meta:
         model = CustomUser
         fields = [
-            'username', 'first_name', 'last_name', 'date_of_birth', 'avatar',
-            'address', 'longitude', 'latitude', 'email', 'phone_number'
+            'username', 'first_name', 'last_name', 'date_of_birth', 
+            'avatar', 'address', 'longitude', 'latitude', 'roles'
         ]
         extra_kwargs = {
-            'email': {'required': False, 'allow_blank': True},
-            'phone_number': {'required': False, 'allow_blank': True},
-            'longitude': {'required': False, 'allow_null': True},
-            'latitude': {'required': False, 'allow_null': True}
+            'username': {'required': False},
+            'first_name': {'required': False},
+            'last_name': {'required': False},
+            'date_of_birth': {'required': False},
+            'address': {'required': False},
+            'longitude': {'required': False},
+            'latitude': {'required': False},
         }
     
-    def validate_username(self, value):
-        """Проверка уникальности username"""
-        if self.instance and self.instance.username == value:
-            return value
+    def update(self, instance, validated_data):
+        """Обновление пользователя с поддержкой изменения нескольких ролей (групп)"""
+        from django.contrib.auth.models import Group
         
-        if CustomUser.objects.filter(username=value).exists():
-            raise serializers.ValidationError("Пользователь с таким именем пользователя уже существует.")
-        return value
+        # Обработка ролей (групп)
+        roles = validated_data.pop('roles', None)
+        
+        # Обновление остальных полей
+        for attr, value in validated_data.items():
+            setattr(instance, attr, value)
+        
+        instance.save()
+        
+        # Обновление групп пользователя
+        if roles is not None:  # Проверяем, что roles передан (даже если пустой список)
+            # Удаление из всех текущих групп
+            instance.groups.clear()
+            # Добавление в новые группы
+            for role_name in roles:
+                group, created = Group.objects.get_or_create(name=role_name)
+                instance.groups.add(group)
+        
+        return instance
+
+
+class FAQSerializer(serializers.ModelSerializer):
+    """Сериализатор для FAQ"""
     
-    def validate_email(self, value):
-        """Проверка email - можно добавить только если у пользователя нет email"""
-        if not value or value.strip() == '':
-            return value
-            
-        # Если у пользователя уже есть email, не позволяем его изменить
-        if self.instance and self.instance.email and self.instance.email != value:
-            raise serializers.ValidationError("Email нельзя изменить. Можно только добавить email, если его нет.")
-        
-        # Проверяем уникальность email
-        if CustomUser.objects.filter(email=value).exclude(pk=self.instance.pk if self.instance else None).exists():
-            raise serializers.ValidationError("Пользователь с таким email уже существует.")
-        
-        return value
-    
-    def validate_phone_number(self, value):
-        """Проверка phone_number - можно добавить только если у пользователя нет phone_number"""
-        if not value or value.strip() == '':
-            return value
-            
-        # Если у пользователя уже есть phone_number, не позволяем его изменить
-        if self.instance and self.instance.phone_number and self.instance.phone_number != value:
-            raise serializers.ValidationError("Номер телефона нельзя изменить. Можно только добавить номер, если его нет.")
-        
-        # Проверяем уникальность phone_number
-        if CustomUser.objects.filter(phone_number=value).exclude(pk=self.instance.pk if self.instance else None).exists():
-            raise serializers.ValidationError("Пользователь с таким номером телефона уже существует.")
-        
-        return value
-    
-    def validate_longitude(self, value):
-        """Проверка долготы"""
-        if value is not None:
-            if value < -180 or value > 180:
-                raise serializers.ValidationError("Долгота должна быть между -180 и 180 градусами.")
-        return value
-    
-    def validate_latitude(self, value):
-        """Проверка широты"""
-        if value is not None:
-            if value < -90 or value > 90:
-                raise serializers.ValidationError("Широта должна быть между -90 и 90 градусами.")
-        return value
-    
-    def validate(self, attrs):
-        """Дополнительная валидация"""
-        # Проверяем, что пользователь пытается добавить хотя бы один идентификатор
-        email = attrs.get('email')
-        phone_number = attrs.get('phone_number')
-        
-        # Очищаем пустые строки
-        if email and email.strip() == '':
-            email = None
-        if phone_number and phone_number.strip() == '':
-            phone_number = None
-        
-        if self.instance:
-            # Если у пользователя уже есть и email и phone_number, не позволяем их изменять
-            if self.instance.email and self.instance.phone_number:
-                if email or phone_number:
-                    raise serializers.ValidationError("У вас уже есть и email и номер телефона. Их нельзя изменить.")
-            
-            # Если у пользователя есть только email, можно добавить phone_number
-            elif self.instance.email and not self.instance.phone_number:
-                if email:
-                    raise serializers.ValidationError("У вас уже есть email. Можно только добавить номер телефона.")
-                # Не требуем обязательного добавления phone_number при обновлении других полей
-                # if not phone_number:
-                #     raise serializers.ValidationError("У вас есть только email. Пожалуйста, добавьте номер телефона.")
-            
-            # Если у пользователя есть только phone_number, можно добавить email
-            elif self.instance.phone_number and not self.instance.email:
-                if phone_number:
-                    raise serializers.ValidationError("У вас уже есть номер телефона. Можно только добавить email.")
-                # Не требуем обязательного добавления email при обновлении других полей
-                # if not email:
-                #     raise serializers.ValidationError("У вас есть только номер телефона. Пожалуйста, добавьте email.")
-        
-        return attrs
+    class Meta:
+        model = FAQ
+        fields = ['id', 'question', 'answer', 'order', 'created_at', 'updated_at']
+        read_only_fields = ['id', 'created_at', 'updated_at']
+

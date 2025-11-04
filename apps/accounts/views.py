@@ -2,9 +2,8 @@ from rest_framework.views import APIView
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework import status
-from rest_framework.generics import RetrieveUpdateDestroyAPIView
 from rest_framework.parsers import MultiPartParser, FormParser, JSONParser
-from drf_yasg.utils import swagger_auto_schema
+from drf_yasg.utils import swagger_auto_schema, no_body
 from drf_yasg import openapi
 from .serializers import (
     PhoneNumberSerializer, 
@@ -14,10 +13,11 @@ from .serializers import (
     TokenResponseSerializer,
     SMSResponseSerializer,
     UserDetailsSerializer,
-    UserUpdateSerializer
+    UserUpdateSerializer,
+    FAQSerializer
 )
 from .services import SMSService
-from .models import CustomUser
+from .models import CustomUser, FAQ
 
 
 class LoginView(APIView):
@@ -27,7 +27,7 @@ class LoginView(APIView):
     permission_classes = [AllowAny]
     
     @swagger_auto_schema(
-        operation_description="Отправка 4-значного кода подтверждения на номер телефона (SMS) или email. Если пользователь не найден, создается новый пользователь автоматически. Параметр 'role' (Driver или Master) обязателен только для новых пользователей.",
+        operation_description="Отправка 4-значного кода подтверждения на номер телефона (SMS) или email. Если пользователь не найден, создается новый пользователь автоматически. Параметр 'role' (Driver или Master) обязателен.",
         request_body=IdentifierSerializer,
         responses={
             200: openapi.Response(
@@ -113,7 +113,7 @@ class CheckSMSCodeView(APIView):
     permission_classes = [AllowAny]
     
     @swagger_auto_schema(
-        operation_description="Проверка SMS кода и получение JWT токена. Параметр 'role' (Driver или Master) обязателен только для новых пользователей.",
+        operation_description="Проверка SMS кода и получение JWT токена. Параметр 'role' (Driver или Master) обязателен.",
         request_body=SMSVerificationSerializer,
         responses={
             200: openapi.Response(
@@ -238,33 +238,22 @@ class SMSServiceStatusView(APIView):
             }, status=status.HTTP_400_BAD_REQUEST)
 
 
-class UserDetailsView(RetrieveUpdateDestroyAPIView):
+class UserDetailsView(APIView):
     """
-    Получение, обновление и удаление информации о пользователе
+    Получение и обновление информации о текущем пользователе
     """
-    serializer_class = UserDetailsSerializer
     permission_classes = [IsAuthenticated]
-    parser_classes = [MultiPartParser, FormParser, JSONParser]
-    
-    def get_object(self):
-        """Возвращает текущего пользователя"""
-        return self.request.user
-    
-    def get_serializer_class(self):
-        """Возвращает соответствующий сериализатор в зависимости от метода"""
-        if self.request.method in ['PUT', 'PATCH']:
-            return UserUpdateSerializer
-        return UserDetailsSerializer
+    parser_classes = [MultiPartParser, FormParser]
     
     @swagger_auto_schema(
-        operation_description="Получение детальной информации о текущем пользователе",
+        operation_description="Получение детальной информации о текущем авторизованном пользователе",
         responses={
             200: openapi.Response(
                 description="Информация о пользователе",
                 schema=UserDetailsSerializer
             ),
             401: openapi.Response(
-                description="Не авторизован",
+                description="Пользователь не авторизован",
                 schema=openapi.Schema(
                     type=openapi.TYPE_OBJECT,
                     properties={
@@ -273,31 +262,46 @@ class UserDetailsView(RetrieveUpdateDestroyAPIView):
                 )
             )
         },
-        tags=['User Details']
+        tags=['User Profile']
     )
-    def get(self, request, *args, **kwargs):
-        """Получение информации о пользователе"""
-        return super().get(request, *args, **kwargs)
+    def get(self, request):
+        """Получение информации о текущем пользователе"""
+        user = request.user
+        serializer = UserDetailsSerializer(user, context={'request': request})
+        return Response({
+            'success': True,
+            'user': serializer.data
+        }, status=status.HTTP_200_OK)
     
     @swagger_auto_schema(
-        operation_description="Обновление информации о пользователе. Можно добавить email если есть только phone_number, или добавить phone_number если есть только email. Поддерживает загрузку изображений через form-data.",
+        operation_description="Обновление информации о текущем пользователе. Поддерживает обновление всех полей, включая avatar (файл) и роль (группу).",
         request_body=UserUpdateSerializer,
+        operation_id='user_update_full',
+        consumes=['multipart/form-data'],
         responses={
             200: openapi.Response(
-                description="Информация о пользователе обновлена",
-                schema=UserDetailsSerializer
-            ),
-            400: openapi.Response(
-                description="Неверные данные",
+                description="Информация о пользователе успешно обновлена",
                 schema=openapi.Schema(
                     type=openapi.TYPE_OBJECT,
                     properties={
-                        'field_name': openapi.Schema(type=openapi.TYPE_ARRAY, items=openapi.Schema(type=openapi.TYPE_STRING))
+                        'success': openapi.Schema(type=openapi.TYPE_BOOLEAN, example=True),
+                        'message': openapi.Schema(type=openapi.TYPE_STRING, example="Информация о пользователе успешно обновлена"),
+                        'user': openapi.Schema(type=openapi.TYPE_OBJECT)
+                    }
+                )
+            ),
+            400: openapi.Response(
+                description="Ошибка валидации данных",
+                schema=openapi.Schema(
+                    type=openapi.TYPE_OBJECT,
+                    properties={
+                        'success': openapi.Schema(type=openapi.TYPE_BOOLEAN, example=False),
+                        'errors': openapi.Schema(type=openapi.TYPE_OBJECT)
                     }
                 )
             ),
             401: openapi.Response(
-                description="Не авторизован",
+                description="Пользователь не авторизован",
                 schema=openapi.Schema(
                     type=openapi.TYPE_OBJECT,
                     properties={
@@ -306,32 +310,57 @@ class UserDetailsView(RetrieveUpdateDestroyAPIView):
                 )
             )
         },
-        tags=['User Details'],
-        consumes=['application/json', 'multipart/form-data']
+        tags=['User Profile']
     )
-    def put(self, request, *args, **kwargs):
+    def put(self, request):
         """Полное обновление информации о пользователе"""
-        return super().put(request, *args, **kwargs)
+        user = request.user
+        serializer = UserUpdateSerializer(user, data=request.data, partial=False)
+        
+        if serializer.is_valid():
+            serializer.save()
+            # Возвращаем обновленные данные через UserDetailsSerializer
+            detail_serializer = UserDetailsSerializer(user, context={'request': request})
+            return Response({
+                'success': True,
+                'message': 'Информация о пользователе успешно обновлена',
+                'user': detail_serializer.data
+            }, status=status.HTTP_200_OK)
+        
+        return Response({
+            'success': False,
+            'errors': serializer.errors
+        }, status=status.HTTP_400_BAD_REQUEST)
     
     @swagger_auto_schema(
-        operation_description="Частичное обновление информации о пользователе. Можно добавить email если есть только phone_number, или добавить phone_number если есть только email. Поддерживает загрузку изображений через form-data.",
+        operation_description="Частичное обновление информации о текущем пользователе. Можно обновить только нужные поля. Поддерживает avatar (файл) и роль (группу).",
         request_body=UserUpdateSerializer,
+        operation_id='user_update_partial',
+        consumes=['multipart/form-data'],
         responses={
             200: openapi.Response(
-                description="Информация о пользователе обновлена",
-                schema=UserDetailsSerializer
+                description="Информация о пользователе успешно обновлена",
+                schema=openapi.Schema(
+                    type=openapi.TYPE_OBJECT,
+                    properties={
+                        'success': openapi.Schema(type=openapi.TYPE_BOOLEAN, example=True),
+                        'message': openapi.Schema(type=openapi.TYPE_STRING, example="Информация о пользователе успешно обновлена"),
+                        'user': openapi.Schema(type=openapi.TYPE_OBJECT)
+                    }
+                )
             ),
             400: openapi.Response(
-                description="Неверные данные",
+                description="Ошибка валидации данных",
                 schema=openapi.Schema(
                     type=openapi.TYPE_OBJECT,
                     properties={
-                        'field_name': openapi.Schema(type=openapi.TYPE_ARRAY, items=openapi.Schema(type=openapi.TYPE_STRING))
+                        'success': openapi.Schema(type=openapi.TYPE_BOOLEAN, example=False),
+                        'errors': openapi.Schema(type=openapi.TYPE_OBJECT)
                     }
                 )
             ),
             401: openapi.Response(
-                description="Не авторизован",
+                description="Пользователь не авторизован",
                 schema=openapi.Schema(
                     type=openapi.TYPE_OBJECT,
                     properties={
@@ -340,33 +369,74 @@ class UserDetailsView(RetrieveUpdateDestroyAPIView):
                 )
             )
         },
-        tags=['User Details'],
-        consumes=['application/json', 'multipart/form-data']
+        tags=['User Profile']
     )
-    def patch(self, request, *args, **kwargs):
+    def patch(self, request):
         """Частичное обновление информации о пользователе"""
-        return super().patch(request, *args, **kwargs)
+        user = request.user
+        serializer = UserUpdateSerializer(user, data=request.data, partial=True)
+        
+        if serializer.is_valid():
+            serializer.save()
+            # Возвращаем обновленные данные через UserDetailsSerializer
+            detail_serializer = UserDetailsSerializer(user, context={'request': request})
+            return Response({
+                'success': True,
+                'message': 'Информация о пользователе успешно обновлена',
+                'user': detail_serializer.data
+            }, status=status.HTTP_200_OK)
+        
+        return Response({
+            'success': False,
+            'errors': serializer.errors
+        }, status=status.HTTP_400_BAD_REQUEST)
+
+
+class FAQListView(APIView):
+    """
+    Получение списка всех FAQ (часто задаваемых вопросов)
+    """
+    permission_classes = [AllowAny]
     
     @swagger_auto_schema(
-        operation_description="Удаление аккаунта пользователя",
+        operation_description="Получение списка всех активных FAQ. Доступно без авторизации.",
         responses={
-            204: openapi.Response(
-                description="Аккаунт успешно удален"
-            ),
-            401: openapi.Response(
-                description="Не авторизован",
+            200: openapi.Response(
+                description="Список FAQ успешно получен",
                 schema=openapi.Schema(
                     type=openapi.TYPE_OBJECT,
                     properties={
-                        'detail': openapi.Schema(type=openapi.TYPE_STRING, example="Authentication credentials were not provided.")
+                        'success': openapi.Schema(type=openapi.TYPE_BOOLEAN, example=True),
+                        'count': openapi.Schema(type=openapi.TYPE_INTEGER, example=5),
+                        'faqs': openapi.Schema(
+                            type=openapi.TYPE_ARRAY,
+                            items=openapi.Schema(
+                                type=openapi.TYPE_OBJECT,
+                                properties={
+                                    'id': openapi.Schema(type=openapi.TYPE_INTEGER, example=1),
+                                    'question': openapi.Schema(type=openapi.TYPE_STRING, example="Как зарегистрироваться в системе?"),
+                                    'answer': openapi.Schema(type=openapi.TYPE_STRING, example="Для регистрации..."),
+                                    'order': openapi.Schema(type=openapi.TYPE_INTEGER, example=1),
+                                    'created_at': openapi.Schema(type=openapi.TYPE_STRING, format='date-time'),
+                                    'updated_at': openapi.Schema(type=openapi.TYPE_STRING, format='date-time')
+                                }
+                            )
+                        )
                     }
                 )
             )
         },
-        tags=['User Details']
+        tags=['FAQ']
     )
-    def delete(self, request, *args, **kwargs):
-        """Удаление аккаунта пользователя"""
-        user = self.get_object()
-        user.delete()
-        return Response(status=status.HTTP_204_NO_CONTENT)
+    def get(self, request):
+        """Получение всех активных FAQ"""
+        faqs = FAQ.objects.filter(is_active=True)
+        serializer = FAQSerializer(faqs, many=True)
+        
+        return Response({
+            'success': True,
+            'count': faqs.count(),
+            'faqs': serializer.data
+        }, status=status.HTTP_200_OK)
+
+

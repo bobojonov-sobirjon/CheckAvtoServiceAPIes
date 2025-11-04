@@ -1,5 +1,5 @@
 from django.urls import path
-from .views import LoginView, CheckSMSCodeView, SMSServiceStatusView, UserDetailsView
+from .views import LoginView, CheckSMSCodeView, SMSServiceStatusView, UserDetailsView, FAQListView
 
 urlpatterns = [
     # Login (SMS kod yuborish)
@@ -13,4 +13,7 @@ urlpatterns = [
     
     # User details endpoints
     path('user/', UserDetailsView.as_view(), name='user_details'),
+    
+    # FAQ endpoints
+    path('faq/', FAQListView.as_view(), name='faq_list'),
 ]
