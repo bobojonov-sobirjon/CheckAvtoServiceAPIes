@@ -153,7 +153,8 @@ STATIC_URL = 'static/'
 STATIC_ROOT = os.path.join(BASE_DIR, 'staticfiles')
 
 MEDIA_URL = "/media/"
-MEDIA_ROOT = os.path.join(BASE_DIR, "/var/www/media/")
+# Production uchun /var/www/media, development uchun local media folder
+MEDIA_ROOT = os.getenv('MEDIA_ROOT', '/var/www/media')
 
 
 LOCALE_PATHS = [
