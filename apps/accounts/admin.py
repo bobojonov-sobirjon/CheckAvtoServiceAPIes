@@ -1,7 +1,7 @@
 from django.contrib import admin
 from django.contrib.auth.admin import UserAdmin
 from django.contrib.sites.models import Site
-from .models import CustomUser, UserBalance, UserSMSCode
+from .models import CustomUser, UserBalance, UserSMSCode, FAQ
 
 
 class UserBalanceInline(admin.StackedInline):
@@ -80,6 +80,28 @@ class UserSMSCodeAdmin(admin.ModelAdmin):
         ('Пользователь', {'fields': ('created_by', 'is_used', 'used_at')}),
         ('Даты', {'fields': ('created_at', 'expires_at')}),
     )
+
+
+@admin.register(FAQ)
+class FAQAdmin(admin.ModelAdmin):
+    """Админка для FAQ"""
+    list_display = ('question_short', 'order', 'is_active', 'created_at', 'updated_at')
+    list_filter = ('is_active', 'created_at', 'updated_at')
+    search_fields = ('question', 'answer')
+    ordering = ('order', '-created_at')
+    list_editable = ('order', 'is_active')
+    
+    fieldsets = (
+        (None, {'fields': ('question', 'answer', 'order', 'is_active')}),
+        ('Даты', {'fields': ('created_at', 'updated_at')}),
+    )
+    
+    readonly_fields = ('created_at', 'updated_at')
+    
+    def question_short(self, obj):
+        """Короткая версия вопроса для отображения в списке"""
+        return obj.question[:100] + '...' if len(obj.question) > 100 else obj.question
+    question_short.short_description = 'Вопрос'
 
 
 admin.site.unregister(Site)

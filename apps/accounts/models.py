@@ -242,3 +242,43 @@ class UserSMSCode(models.Model):
         self.save(update_fields=['is_used', 'used_at'])
 
 
+class FAQ(models.Model):
+    """
+    FAQ (Frequently Asked Questions) model
+    """
+    question = models.TextField(
+        verbose_name="Вопрос",
+        help_text="Часто задаваемый вопрос"
+    )
+    answer = models.TextField(
+        verbose_name="Ответ",
+        help_text="Ответ на вопрос"
+    )
+    order = models.IntegerField(
+        default=0,
+        verbose_name="Порядок",
+        help_text="Порядок отображения (меньшее число - выше)"
+    )
+    is_active = models.BooleanField(
+        default=True,
+        verbose_name="Активен",
+        help_text="Отображать ли вопрос в списке"
+    )
+    created_at = models.DateTimeField(
+        auto_now_add=True,
+        verbose_name="Дата создания"
+    )
+    updated_at = models.DateTimeField(
+        auto_now=True,
+        verbose_name="Дата обновления"
+    )
+
+    class Meta:
+        verbose_name = "FAQ"
+        verbose_name_plural = "FAQ"
+        ordering = ['order', '-created_at']
+
+    def __str__(self):
+        return f"{self.question[:50]}..."
+
+
