@@ -1,5 +1,14 @@
 from rest_framework import serializers
-from .models import Master, MasterService, ServiceType
+from .models import Master, MasterService, MasterImage, ServiceType
+
+
+class MasterImageSerializer(serializers.ModelSerializer):
+    """Сериализатор для изображений мастера"""
+    
+    class Meta:
+        model = MasterImage
+        fields = ['id', 'image', 'created_at', 'updated_at']
+        read_only_fields = ['id', 'created_at', 'updated_at']
 
 
 class MasterSerializer(serializers.ModelSerializer):
@@ -7,6 +16,7 @@ class MasterSerializer(serializers.ModelSerializer):
     user_info = serializers.SerializerMethodField()
     service_type_display = serializers.SerializerMethodField()
     services = serializers.SerializerMethodField()
+    images = serializers.SerializerMethodField()
     
     class Meta:
         model = Master
@@ -14,7 +24,7 @@ class MasterSerializer(serializers.ModelSerializer):
             'id', 'user_info', 'city', 'address', 
             'latitude', 'longitude', 'phone', 'working_time', 'service_type_display', 'services',
             'card_number', 'card_expiry_month', 'card_expiry_year', 
-            'card_cvv', 'balance', 'created_at', 'updated_at', 
+            'card_cvv', 'balance', 'reserved_amount', 'description', 'images', 'created_at', 'updated_at', 
             'last_activity'
         ]
         read_only_fields = ['id', 'user', 'created_at', 'updated_at', 'last_activity']
@@ -42,6 +52,11 @@ class MasterSerializer(serializers.ModelSerializer):
         """Получить услуги мастера"""
         master_services = MasterService.objects.filter(master=obj)
         return MasterServiceSerializer(master_services, many=True, context=self.context).data
+    
+    def get_images(self, obj):
+        """Получить изображения мастера"""
+        master_images = MasterImage.objects.filter(master=obj)
+        return MasterImageSerializer(master_images, many=True, context=self.context).data
     
     def validate_service_type(self, value):
         """Валидация типа услуги"""
@@ -145,13 +160,19 @@ class MasterCreateSerializer(serializers.ModelSerializer):
 
 class MasterUpdateSerializer(serializers.ModelSerializer):
     """Сериализатор для обновления мастера (частичное обновление)"""
+    images = serializers.ListField(
+        child=serializers.ImageField(),
+        required=False,
+        allow_empty=True,
+        write_only=True
+    )
     
     class Meta:
         model = Master
         fields = [
             'city', 'address', 'latitude', 'longitude', 'phone', 'working_time', 
             'service_type', 'card_number', 'card_expiry_month', 'card_expiry_year', 
-            'card_cvv'
+            'card_cvv', 'description', 'images'
         ]
         extra_kwargs = {
             'city': {'required': False},
@@ -165,6 +186,7 @@ class MasterUpdateSerializer(serializers.ModelSerializer):
             'card_expiry_month': {'required': False},
             'card_expiry_year': {'required': False},
             'card_cvv': {'required': False},
+            'description': {'required': False, 'allow_blank': True, 'allow_null': True},
         }
     
     def validate_service_type(self, value):
@@ -186,6 +208,24 @@ class MasterUpdateSerializer(serializers.ModelSerializer):
             if not (-180 <= value <= 180):
                 raise serializers.ValidationError("Долгота должна быть между -180 и 180")
         return value
+    
+    def update(self, instance, validated_data):
+        """Обновление мастера с обработкой изображений"""
+        images_data = validated_data.pop('images', None)
+        
+        # Обновляем основные поля
+        instance = super().update(instance, validated_data)
+        
+        # Если переданы изображения, удаляем старые и создаем новые
+        if images_data is not None:
+            # Удаляем старые изображения
+            MasterImage.objects.filter(master=instance).delete()
+            
+            # Создаем новые изображения
+            for image in images_data:
+                MasterImage.objects.create(master=instance, image=image)
+        
+        return instance
 
 
 class MasterNearbySerializer(serializers.ModelSerializer):
@@ -194,13 +234,14 @@ class MasterNearbySerializer(serializers.ModelSerializer):
     user_phone = serializers.ReadOnlyField(source='user.phone_number')
     services_display = serializers.SerializerMethodField()
     distance = serializers.SerializerMethodField()
+    images = serializers.SerializerMethodField()
     
     class Meta:
         model = Master
         fields = [
             'id', 'user_name', 'user_phone', 'city', 'address', 
             'latitude', 'longitude', 'services', 'services_display', 
-            'distance'
+            'distance', 'description', 'images'
         ]
     
     def get_services_display(self, obj):
@@ -211,6 +252,11 @@ class MasterNearbySerializer(serializers.ModelSerializer):
     def get_distance(self, obj):
         """Получить расстояние (будет установлено в view)"""
         return getattr(obj, 'calculated_distance', None)
+    
+    def get_images(self, obj):
+        """Получить изображения мастера"""
+        master_images = MasterImage.objects.filter(master=obj)
+        return MasterImageSerializer(master_images, many=True, context=self.context).data
 
 
 class MasterServiceSerializer(serializers.ModelSerializer):
@@ -219,7 +265,7 @@ class MasterServiceSerializer(serializers.ModelSerializer):
     class Meta:
         model = MasterService
         fields = [
-            'id', 'name', 'price_from', 'price_to', 'created_at'
+            'id', 'name', 'master', 'price_from', 'price_to', 'created_at'
         ]
         read_only_fields = ['id', 'created_at']
     

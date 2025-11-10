@@ -247,6 +247,14 @@ SMS_FALLBACK_SERVICE = 'smsc'  # Резервный SMS сервис
 # Swagger JWT Configuration
 SWAGGER_SETTINGS = {
     'SECURITY_DEFINITIONS': {
+        # JWT Bearer auth header (used by security=[{'Bearer': []}] in views)
+        'Bearer': {
+            'type': 'apiKey',
+            'name': 'Authorization',
+            'in': 'header',
+            'description': 'JWT Authorization header using the Bearer scheme. Example: "Bearer <token>"'
+        },
+        # OAuth2 password flow used by the custom swagger token endpoint
         'OAuth2': {
             'type': 'oauth2',
             'authorizationUrl': '',

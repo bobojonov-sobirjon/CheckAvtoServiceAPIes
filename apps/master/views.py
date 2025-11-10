@@ -49,6 +49,10 @@ class MasterProfileView(APIView):
                                     'date_joined': openapi.Schema(type=openapi.TYPE_STRING, format=openapi.FORMAT_DATETIME)
                                 }
                             ),
+                            'working_time': openapi.Schema(type=openapi.TYPE_STRING),
+                            'phone': openapi.Schema(type=openapi.TYPE_STRING),
+                            'description': openapi.Schema(type=openapi.TYPE_STRING),
+                            'images': openapi.Schema(type=openapi.TYPE_ARRAY, items=openapi.Schema(type=openapi.TYPE_STRING)),
                             'city': openapi.Schema(type=openapi.TYPE_STRING),
                             'address': openapi.Schema(type=openapi.TYPE_STRING),
                             'latitude': openapi.Schema(type=openapi.TYPE_NUMBER),
@@ -284,6 +288,10 @@ class MasterListView(APIView):
                                     'user_phone': openapi.Schema(type=openapi.TYPE_STRING),
                                     'city': openapi.Schema(type=openapi.TYPE_STRING),
                                     'address': openapi.Schema(type=openapi.TYPE_STRING),
+                                    'working_time': openapi.Schema(type=openapi.TYPE_STRING),
+                                    'phone': openapi.Schema(type=openapi.TYPE_STRING),
+                                    'description': openapi.Schema(type=openapi.TYPE_STRING),
+                                    'images': openapi.Schema(type=openapi.TYPE_ARRAY, items=openapi.Schema(type=openapi.TYPE_STRING)),
                                     'latitude': openapi.Schema(type=openapi.TYPE_NUMBER),
                                     'longitude': openapi.Schema(type=openapi.TYPE_NUMBER),
                                     'services': openapi.Schema(type=openapi.TYPE_ARRAY, items=openapi.Schema(type=openapi.TYPE_STRING)),
@@ -551,7 +559,29 @@ class MasterDetailsView(APIView):
     @swagger_auto_schema(
         operation_description="Обновить мастера по ID",
         security=[{'Bearer': []}],
-        request_body=MasterSerializer,
+        consumes=['multipart/form-data', 'application/json'],
+        request_body=openapi.Schema(
+            type=openapi.TYPE_OBJECT,
+            properties={
+                'city': openapi.Schema(type=openapi.TYPE_STRING, description='Город'),
+                'address': openapi.Schema(type=openapi.TYPE_STRING, description='Адрес'),
+                'latitude': openapi.Schema(type=openapi.TYPE_NUMBER, description='Широта'),
+                'longitude': openapi.Schema(type=openapi.TYPE_NUMBER, description='Долгота'),
+                'phone': openapi.Schema(type=openapi.TYPE_STRING, description='Телефон'),
+                'working_time': openapi.Schema(type=openapi.TYPE_STRING, description='Рабочее время'),
+                'service_type': openapi.Schema(type=openapi.TYPE_STRING, description='Тип услуги'),
+                'card_number': openapi.Schema(type=openapi.TYPE_STRING, description='Номер карты'),
+                'card_expiry_month': openapi.Schema(type=openapi.TYPE_INTEGER, description='Месяц истечения'),
+                'card_expiry_year': openapi.Schema(type=openapi.TYPE_INTEGER, description='Год истечения'),
+                'card_cvv': openapi.Schema(type=openapi.TYPE_STRING, description='CVV/CVC'),
+                'description': openapi.Schema(type=openapi.TYPE_STRING, description='Описание'),
+                'images': openapi.Schema(
+                    type=openapi.TYPE_ARRAY,
+                    items=openapi.Schema(type=openapi.TYPE_STRING, format=openapi.FORMAT_BINARY),
+                    description='Изображения мастера (можно загрузить несколько)'
+                )
+            }
+        ),
         responses={
             200: openapi.Response(
                 description="Мастер обновлен",
@@ -559,21 +589,23 @@ class MasterDetailsView(APIView):
                     type=openapi.TYPE_OBJECT,
                     properties={
                         'id': openapi.Schema(type=openapi.TYPE_INTEGER),
-                        'user': openapi.Schema(type=openapi.TYPE_INTEGER),
-                        'user_name': openapi.Schema(type=openapi.TYPE_STRING),
-                        'user_phone': openapi.Schema(type=openapi.TYPE_STRING),
+                        'user_info': openapi.Schema(type=openapi.TYPE_OBJECT),
                         'city': openapi.Schema(type=openapi.TYPE_STRING),
                         'address': openapi.Schema(type=openapi.TYPE_STRING),
                         'latitude': openapi.Schema(type=openapi.TYPE_NUMBER),
                         'longitude': openapi.Schema(type=openapi.TYPE_NUMBER),
-                        'service_type': openapi.Schema(type=openapi.TYPE_STRING),
-                        'services': openapi.Schema(type=openapi.TYPE_ARRAY, items=openapi.Schema(type=openapi.TYPE_STRING)),
-                        'services_display': openapi.Schema(type=openapi.TYPE_ARRAY, items=openapi.Schema(type=openapi.TYPE_STRING)),
+                        'phone': openapi.Schema(type=openapi.TYPE_STRING),
+                        'working_time': openapi.Schema(type=openapi.TYPE_STRING),
+                        'service_type_display': openapi.Schema(type=openapi.TYPE_STRING),
+                        'services': openapi.Schema(type=openapi.TYPE_ARRAY, items=openapi.Schema(type=openapi.TYPE_OBJECT)),
                         'card_number': openapi.Schema(type=openapi.TYPE_STRING),
                         'card_expiry_month': openapi.Schema(type=openapi.TYPE_INTEGER),
                         'card_expiry_year': openapi.Schema(type=openapi.TYPE_INTEGER),
                         'card_cvv': openapi.Schema(type=openapi.TYPE_STRING),
+                        'balance': openapi.Schema(type=openapi.TYPE_NUMBER),
                         'reserved_amount': openapi.Schema(type=openapi.TYPE_NUMBER),
+                        'description': openapi.Schema(type=openapi.TYPE_STRING),
+                        'images': openapi.Schema(type=openapi.TYPE_ARRAY, items=openapi.Schema(type=openapi.TYPE_OBJECT)),
                         'created_at': openapi.Schema(type=openapi.TYPE_STRING, format=openapi.FORMAT_DATETIME),
                         'updated_at': openapi.Schema(type=openapi.TYPE_STRING, format=openapi.FORMAT_DATETIME),
                         'last_activity': openapi.Schema(type=openapi.TYPE_STRING, format=openapi.FORMAT_DATETIME)
@@ -595,7 +627,20 @@ class MasterDetailsView(APIView):
                 status=status.HTTP_404_NOT_FOUND
             )
         
-        serializer = MasterUpdateSerializer(master, data=request.data, context={'request': request})
+        # Multipart/form-data uchun request.data va request.FILES ni birlashtirish
+        # QueryDict ni dict ga o'tkazish
+        if hasattr(request.data, 'dict'):
+            data = request.data.dict()
+        else:
+            data = dict(request.data) if hasattr(request.data, '__iter__') else request.data
+        
+        # Agar images ko'p bo'lsa, ularni listga o'tkazish
+        if request.FILES:
+            images = request.FILES.getlist('images')
+            if images:
+                data['images'] = images
+        
+        serializer = MasterUpdateSerializer(master, data=data, context={'request': request})
         if serializer.is_valid():
             serializer.save()
             # To'liq master ma'lumotlarini qaytarish

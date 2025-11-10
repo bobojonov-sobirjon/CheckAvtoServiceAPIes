@@ -68,6 +68,8 @@ class Master(models.Model):
         verbose_name='Зарезервированная сумма'
     )
     
+    description = models.TextField(blank=True, verbose_name='Описание', null=True)
+    
     # Временные метки
     created_at = models.DateTimeField(auto_now_add=True, verbose_name='Дата создания')
     updated_at = models.DateTimeField(auto_now=True, verbose_name='Дата обновления')
@@ -111,6 +113,27 @@ class Master(models.Model):
         """Освободить зарезервированную сумму"""
         self.reserved_amount = max(0, self.reserved_amount - amount)
         self.save(update_fields=['reserved_amount'])
+
+
+class MasterImage(models.Model):
+    """Изображение мастера"""
+    master = models.ForeignKey(
+        Master, 
+        on_delete=models.CASCADE, 
+        related_name='master_images',
+        verbose_name='Мастер'
+    )
+    image = models.ImageField(upload_to='master_images/', verbose_name='Изображение')
+    created_at = models.DateTimeField(auto_now_add=True, verbose_name='Дата добавления')
+    updated_at = models.DateTimeField(auto_now=True, verbose_name='Дата обновления')
+    
+    class Meta:
+        verbose_name = 'Изображение мастера'
+        verbose_name_plural = 'Изображения мастеров'
+        ordering = ['-created_at']
+    
+    def __str__(self):
+        return f"{self.master} - {self.image.name}"
 
 
 class MasterService(models.Model):
