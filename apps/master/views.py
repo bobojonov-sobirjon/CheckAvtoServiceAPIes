@@ -1,6 +1,7 @@
 from rest_framework.views import APIView
 from rest_framework import status
 from rest_framework.response import Response
+from rest_framework.permissions import IsAuthenticated
 from drf_yasg.utils import swagger_auto_schema
 from drf_yasg import openapi
 from django.db.models import Q
@@ -171,7 +172,7 @@ class MasterListView(APIView):
       фильтр по прямоугольной области (4 точки)
     - page, page_size: пагинация
     """
-    permission_classes = [IsMasterGroup]
+    permission_classes = [IsAuthenticated]
     
     # Константы для валидации
     MIN_LATITUDE = -90
@@ -499,7 +500,7 @@ class MasterDetailsView(APIView):
     - PATCH: частичное обновление мастера
     - DELETE: удаление мастера
     """
-    permission_classes = [IsMasterGroup]
+    permission_classes = [IsAuthenticated]
     
     def get_object(self, master_id):
         """Получение мастера по ID"""
