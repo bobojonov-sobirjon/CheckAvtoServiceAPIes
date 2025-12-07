@@ -818,10 +818,7 @@ class MasterServicesByMasterView(APIView):
         responses={
             200: openapi.Response(
                 description="Услуги мастера", 
-                schema=openapi.Schema(
-                    type=openapi.TYPE_ARRAY,
-                    items=MasterServiceSerializer
-                )
+                schema=MasterServiceSerializer
             ),
             404: openapi.Response(description="Мастер не найден"),
             403: openapi.Response(description="Нет прав доступа")
@@ -1307,10 +1304,7 @@ class MasterInMasterByMasterView(APIView):
         responses={
             200: openapi.Response(
                 description="Список мастеров в мастере", 
-                schema=openapi.Schema(
-                    type=openapi.TYPE_ARRAY,
-                    items=MasterInMasterSerializer
-                )
+                schema=MasterInMasterSerializer
             ),
             404: openapi.Response(description="Мастер не найден"),
             403: openapi.Response(description="Нет прав доступа")

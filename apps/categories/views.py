@@ -28,10 +28,7 @@ class CategoryListAPIView(APIView):
         responses={
             200: openapi.Response(
                 description="Список категорий", 
-                schema=openapi.Schema(
-                    type=openapi.TYPE_ARRAY,
-                    items=CategorySerializer
-                )
+                schema=CategorySerializer
             )
         },
         tags=['Categories']

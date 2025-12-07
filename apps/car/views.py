@@ -22,7 +22,7 @@ class CarListCreateView(APIView):
         responses={
             200: openapi.Response(
                 description="Список машин",
-                schema=CarSerializer(many=True)
+                schema=CarSerializer
             ),
             403: openapi.Response(description="Нет прав доступа")
         },
