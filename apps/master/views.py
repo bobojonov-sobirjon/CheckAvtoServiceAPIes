@@ -816,7 +816,13 @@ class MasterServicesByMasterView(APIView):
     @swagger_auto_schema(
         operation_description="Получить услуги мастера по ID мастера (с элементами, сгруппированными по категориям)",
         responses={
-            200: openapi.Response(description="Услуги мастера", schema=MasterServiceSerializer(many=True)),
+            200: openapi.Response(
+                description="Услуги мастера", 
+                schema=openapi.Schema(
+                    type=openapi.TYPE_ARRAY,
+                    items=MasterServiceSerializer
+                )
+            ),
             404: openapi.Response(description="Мастер не найден"),
             403: openapi.Response(description="Нет прав доступа")
         },
@@ -1299,7 +1305,13 @@ class MasterInMasterByMasterView(APIView):
     @swagger_auto_schema(
         operation_description="Получить список мастеров в мастере по ID мастера",
         responses={
-            200: openapi.Response(description="Список мастеров в мастере", schema=MasterInMasterSerializer(many=True)),
+            200: openapi.Response(
+                description="Список мастеров в мастере", 
+                schema=openapi.Schema(
+                    type=openapi.TYPE_ARRAY,
+                    items=MasterInMasterSerializer
+                )
+            ),
             404: openapi.Response(description="Мастер не найден"),
             403: openapi.Response(description="Нет прав доступа")
         },

@@ -82,7 +82,10 @@ class OrderListCreateView(APIView):
         responses={
             200: openapi.Response(
                 description="Список заказов",
-                schema=OrderSerializer(many=True)
+                schema=openapi.Schema(
+                    type=openapi.TYPE_ARRAY,
+                    items=OrderSerializer
+                )
             ),
             401: openapi.Response(description="Не авторизован"),
         }
@@ -178,11 +181,7 @@ class OrderListCreateView(APIView):
                             description='Сообщение об успешном создании заказа',
                             example='Ваш заказ отправлен'
                         ),
-                        'order': openapi.Schema(
-                            type=openapi.TYPE_OBJECT,
-                            description='Данные созданного заказа',
-                            schema=OrderSerializer
-                        )
+                        'order': OrderSerializer
                     }
                 )
             ),
@@ -516,7 +515,10 @@ class OrderDetailView(APIView):
     responses={
         200: openapi.Response(
             description="Список заказов пользователя",
-            schema=OrderSerializer(many=True)
+            schema=openapi.Schema(
+                type=openapi.TYPE_ARRAY,
+                items=OrderSerializer
+            )
         ),
         401: openapi.Response(description="Не авторизован"),
     }
@@ -573,7 +575,10 @@ def orders_by_user(request):
     responses={
         200: openapi.Response(
             description="Список заказов мастера в области",
-            schema=OrderSerializer(many=True)
+            schema=openapi.Schema(
+                type=openapi.TYPE_ARRAY,
+                items=OrderSerializer
+            )
         ),
         401: openapi.Response(description="Не авторизован"),
         403: openapi.Response(description="Пользователь не является мастером"),
@@ -959,7 +964,13 @@ class RatingListView(APIView):
             )
         ],
         responses={
-            200: openapi.Response(description="Список рейтингов", schema=RatingSerializer(many=True)),
+            200: openapi.Response(
+                description="Список рейтингов", 
+                schema=openapi.Schema(
+                    type=openapi.TYPE_ARRAY,
+                    items=RatingSerializer
+                )
+            ),
             401: openapi.Response(description="Не авторизован")
         }
     )
