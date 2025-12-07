@@ -19,6 +19,12 @@ class CustomUser(AbstractUser):
         verbose_name="Номер телефона",
         help_text="Необязательно. Введите ваш номер телефона."
     )
+    description = models.TextField(
+        blank=True,
+        null=True,
+        verbose_name="Описание",
+        help_text="Необязательно. Введите ваше описание."
+    )
     date_of_birth = models.DateField(
         blank=True,
         null=True,
@@ -92,6 +98,16 @@ class CustomUser(AbstractUser):
         Return the short name for the user.
         """
         return self.first_name if self.first_name else self.email
+    
+    def get_role_name(self):
+        """
+        Return the role name based on user groups.
+        """
+        groups = self.groups.all()
+        if groups.exists():
+            # Return the first group name
+            return groups.first().name
+        return 'Нет роли'
 
 
 class UserBalance(models.Model):

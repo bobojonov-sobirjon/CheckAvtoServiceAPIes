@@ -1,6 +1,7 @@
 from django.contrib import admin
 from django import forms
-from .models import Master, ServiceType, MasterService
+from .models import Master, MasterService, MasterServiceItems, MasterInMaster
+from apps.categories.models import Category
 
 
 class MasterAdminForm(forms.ModelForm):
@@ -14,6 +15,9 @@ class MasterAdminForm(forms.ModelForm):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         # services field removed - now handled by MasterService model
+        # Фильтруем категории только по типу BY_MASTER
+        if 'category' in self.fields:
+            self.fields['category'].queryset = Category.objects.filter(type_category='by_master')
     
     def save(self, commit=True):
         instance = super().save(commit=False)
@@ -22,12 +26,33 @@ class MasterAdminForm(forms.ModelForm):
         return instance
 
 
-class MasterServiceInline(admin.TabularInline):
-    """Инлайн для услуг мастера"""
-    model = MasterService
+class MasterServiceItemsInline(admin.TabularInline):
+    """Инлайн для элементов услуги мастера"""
+    model = MasterServiceItems
     extra = 1
-    fields = ['name', 'price_from', 'price_to']
-    ordering = ['name']
+    fields = ['name', 'price_from', 'price_to', 'category']
+    ordering = ['-created_at']
+    
+    def formfield_for_foreignkey(self, db_field, request, **kwargs):
+        """Фильтруем категории только по типу BY_MASTER"""
+        if db_field.name == 'category':
+            kwargs['queryset'] = Category.objects.filter(type_category='by_master')
+        return super().formfield_for_foreignkey(db_field, request, **kwargs)
+
+
+class MasterInMasterInline(admin.TabularInline):
+    """Инлайн для мастеров в мастере"""
+    model = MasterInMaster
+    extra = 1
+    fields = ['masterinmaster', 'category', 'created_at', 'updated_at']
+    readonly_fields = ['created_at', 'updated_at']
+    ordering = ['-created_at']
+    
+    def formfield_for_foreignkey(self, db_field, request, **kwargs):
+        """Фильтруем категории только по типу BY_MASTER"""
+        if db_field.name == 'category':
+            kwargs['queryset'] = Category.objects.filter(type_category='by_master')
+        return super().formfield_for_foreignkey(db_field, request, **kwargs)
 
 
 @admin.register(Master)
@@ -46,11 +71,11 @@ class MasterAdmin(admin.ModelAdmin):
         'city'
     ]
     ordering = ['-created_at']
-    inlines = [MasterServiceInline]
+    inlines = [MasterInMasterInline]
     
     fieldsets = (
         ('Пользователь', {
-            'fields': ('service_type', 'user',)
+            'fields': ('user', 'category')
         }),
         ('Местоположение', {
             'fields': ('city', 'address', 'latitude', 'longitude')
@@ -64,7 +89,7 @@ class MasterAdmin(admin.ModelAdmin):
             'classes': ('collapse',)
         }),
         ('Финансы', {
-            'fields': ('balance',),
+            'fields': ('balance', 'reserved_amount'),
             'classes': ('collapse',)
         }),
         ('Временные метки', {
@@ -87,5 +112,20 @@ class MasterAdmin(admin.ModelAdmin):
         """Отображение услуг в списке"""
         from .models import MasterService
         master_services = MasterService.objects.filter(master=obj)
-        return ', '.join([service.name for service in master_services])
+        return f"{master_services.count()} услуг"
     services_display.short_description = 'Услуги'
+
+
+@admin.register(MasterService)
+class MasterServiceAdmin(admin.ModelAdmin):
+    """Админка для услуг мастера"""
+    list_display = ['master__address', 'master__city', 'master', 'items_count', 'created_at']
+    list_filter = ['created_at']
+    search_fields = ['master__user__phone_number', 'master__user__first_name']
+    ordering = ['-created_at']
+    inlines = [MasterServiceItemsInline]
+    
+    def items_count(self, obj):
+        return obj.master_service_items.count()
+    items_count.short_description = 'Количество элементов'
+

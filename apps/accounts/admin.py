@@ -27,15 +27,20 @@ class CustomUserAdmin(UserAdmin):
     """
     Настройка админки для пользователей
     """
-    list_display = ('email', 'username', 'first_name', 'last_name', 'is_verified', 'is_staff', 'is_active', 'created_at')
-    list_filter = ('is_verified', 'is_staff', 'is_superuser', 'is_active', 'created_at')
+    
+    def get_role_name(self, obj):
+        return obj.get_role_name()
+    get_role_name.short_description = 'Роль'
+    
+    list_display = ('email', 'username', 'first_name', 'last_name', 'get_role_name', 'created_at')
+    list_filter = ('groups', 'is_verified', 'is_staff', 'is_superuser', 'is_active', 'created_at')
     search_fields = ('email', 'username', 'first_name', 'last_name', 'phone_number')
     ordering = ('-created_at',)
     inlines = [UserBalanceInline, UserSMSCodeInline]
     
     fieldsets = (
         (None, {'fields': ('username', 'password')}),
-        ('Личная информация', {'fields': ('first_name', 'last_name', 'email', 'phone_number', 'date_of_birth', 'avatar')}),
+        ('Личная информация', {'fields': ('first_name', 'last_name', 'email', 'phone_number', 'date_of_birth', 'avatar', 'description')}),
         ('Права доступа', {'fields': ('is_active', 'is_staff', 'is_superuser', 'groups')}),
         ('Важные даты', {'fields': ('last_login', 'date_joined', 'created_at', 'updated_at')}),
         ('Подтверждение', {'fields': ('is_verified',)}),

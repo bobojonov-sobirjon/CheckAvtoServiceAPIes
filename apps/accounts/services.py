@@ -308,8 +308,8 @@ class SMSService:
             # Сохранение информации о пользователе в кэше
             cache.set(f'user_exists_{identifier_type}_{identifier}', user_exists, timeout=300)
             
-            # Сохранение роли в кэше (только для новых пользователей)
-            if role and not user_exists:
+            # Сохранение роли в кэше (для новых пользователей и для добавления роли существующим)
+            if role:
                 cache.set(f'user_role_{identifier_type}_{identifier}', role, timeout=300)
             
             # Определяем сообщение в зависимости от типа отправки
@@ -437,6 +437,17 @@ class SMSService:
                     else:  # email
                         user = User.objects.prefetch_related('groups').get(email=identifier)
                     created = False
+                    
+                    # Если пользователь существует и указана новая роль, добавляем её
+                    if role:
+                        try:
+                            group = Group.objects.get(name=role)
+                            # Проверяем, есть ли уже эта роль у пользователя
+                            if not user.groups.filter(name=role).exists():
+                                user.groups.add(group)
+                                logger.info(f"Added role {role} to existing user {user.email}")
+                        except Group.DoesNotExist:
+                            logger.warning(f"Group {role} not found, skipping role assignment")
                 except User.DoesNotExist:
                     # Если пользователь не найден, создать нового
                     if identifier_type == 'phone':

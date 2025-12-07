@@ -34,6 +34,7 @@ LOCAL_APPS = [
     'apps.car',
     'apps.master',
     'apps.order',
+    'apps.categories'
 ]
 
 THIRD_PARTY_APPS = [

@@ -1,18 +1,9 @@
 from django.db import models
 from django.contrib.auth import get_user_model
 from django.core.exceptions import ValidationError
+from apps.categories.models import Category
 
 User = get_user_model()
-
-
-class ServiceType(models.TextChoices):
-    """Статические типы услуг"""
-    DIAGNOSTICS = 'diagnostics', 'Диагностика электроники'
-    SERVICE = 'service', 'Сервис и СТО'
-    TIRE_REPAIR = 'tire_repair', 'Шиномонтаж'
-    TOWING = 'towing', 'Буксировка'
-    CAR_WASH = 'car_wash', 'Автомойка'
-    ROAD_HELP = 'road_help', 'Помощь на дороге'
 
 
 class Master(models.Model):
@@ -22,6 +13,12 @@ class Master(models.Model):
         on_delete=models.CASCADE, 
         related_name='master_profiles',
         verbose_name='Пользователь'
+    )
+    
+    category = models.ManyToManyField(
+        Category,
+        verbose_name='Категория',
+        related_name='master_categories'
     )
     
     # Местоположение
@@ -43,8 +40,6 @@ class Master(models.Model):
     )
     phone = models.CharField(max_length=20, default='', verbose_name='Телефон')
     working_time = models.CharField(max_length=100, default='', verbose_name='Рабочее время')
-    
-    service_type = models.CharField(max_length=100, default='', verbose_name='Тип услуги', choices=ServiceType.choices)
     
     # Банковские данные
     card_number = models.CharField(max_length=19, blank=True, verbose_name='Номер карты')
@@ -144,6 +139,26 @@ class MasterService(models.Model):
         related_name='master_services',
         verbose_name='Мастер'
     )
+    
+    created_at = models.DateTimeField(auto_now_add=True, verbose_name='Дата добавления')
+    
+    class Meta:
+        verbose_name = 'Услуга мастера'
+        verbose_name_plural = 'Услуги мастеров'
+        ordering = ['-created_at']
+    
+    def __str__(self):
+        return f"{self.master} - {self.id}"
+
+
+class MasterServiceItems(models.Model):
+    """Items услуги мастера"""
+    master_service = models.ForeignKey(
+        MasterService,
+        on_delete=models.CASCADE,
+        related_name='master_service_items',
+        verbose_name='Услуга мастера'
+    )
     name = models.CharField(max_length=200, default='', verbose_name='Название услуги')
     price_from = models.DecimalField(
         max_digits=10, 
@@ -157,12 +172,52 @@ class MasterService(models.Model):
         default=0.00,
         verbose_name='Цена до'
     )
+    category = models.ForeignKey(
+        Category,
+        on_delete=models.CASCADE,
+        related_name='master_service_items',
+        verbose_name='Категория'
+    )
     created_at = models.DateTimeField(auto_now_add=True, verbose_name='Дата добавления')
+    updated_at = models.DateTimeField(auto_now=True, verbose_name='Дата обновления')
     
     class Meta:
-        verbose_name = 'Услуга мастера'
-        verbose_name_plural = 'Услуги мастеров'
-        ordering = ['name']
+        verbose_name = 'Услуги'
+        verbose_name_plural = 'Услуги'
+        ordering = ['-created_at']
     
     def __str__(self):
-        return f"{self.master} - {self.name}: {self.price_from}-{self.price_to}"
+        return f"{self.master_service} - {self.name}: {self.price_from}-{self.price_to}"
+
+
+class MasterInMaster(models.Model):
+    """Модель для связи мастера с мастером внутри мастера"""
+    master = models.ForeignKey(
+        Master,
+        on_delete=models.CASCADE,
+        related_name='master_in_masters',
+        verbose_name='Мастер'
+    )
+    masterinmaster = models.ForeignKey(
+        User,
+        on_delete=models.CASCADE,
+        related_name='master_in_master_profiles',
+        verbose_name='Мастер в мастере'
+    )
+    category = models.ForeignKey(
+        Category,
+        on_delete=models.CASCADE,
+        related_name='master_in_master_categories',
+        verbose_name='Категория'
+    )
+    created_at = models.DateTimeField(auto_now_add=True, verbose_name='Дата создания')
+    updated_at = models.DateTimeField(auto_now=True, verbose_name='Дата обновления')
+    
+    class Meta:
+        verbose_name = 'Мастер в мастере'
+        verbose_name_plural = 'Мастера в мастерах'
+        ordering = ['-created_at']
+        unique_together = ['master', 'masterinmaster']
+    
+    def __str__(self):
+        return f"{self.master} - {self.masterinmaster.get_full_name()}"

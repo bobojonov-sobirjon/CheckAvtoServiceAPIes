@@ -2,18 +2,12 @@ from site import venv
 from django.db import models
 from apps.accounts.models import CustomUser
 from django.core.exceptions import ValidationError
+from apps.categories.models import Category
 
 
 class Car(models.Model):
-    class TypeCar(models.TextChoices):
-        Passengercar = 'Легковой', 'Легковой'
-        Motorcycle = 'Мото', 'Мото'
-        Truck = 'Грузовой', 'Грузовой'
-        Bus = 'Автобус', 'Автобус'
-        Technique = 'Техника', 'Техника'
-        Hydro = 'Гидро', 'Гидро'
 
-    type_car = models.CharField(max_length=255, null=True, blank=True, verbose_name='Тип машины', choices=TypeCar.choices)
+    category = models.ForeignKey(Category, on_delete=models.CASCADE, null=True, blank=True, verbose_name='Категория', related_name='cars')
     
     brand = models.CharField(max_length=255, null=True, blank=True, verbose_name='Марка машины')
     model = models.CharField(max_length=255, null=True, blank=True, verbose_name='Модель машины')

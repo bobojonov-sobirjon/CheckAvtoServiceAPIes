@@ -170,7 +170,7 @@ class UserSerializer(serializers.ModelSerializer):
     
     class Meta:
         model = CustomUser
-        fields = ['id', 'phone_number', 'first_name', 'last_name', 'email', 'is_verified', 'created_at', 'roles']
+        fields = ['id', 'phone_number', 'first_name', 'last_name', 'email', 'description', 'is_verified', 'created_at', 'roles']
         read_only_fields = ['id', 'created_at', 'roles']
     
     def get_roles(self, obj):
@@ -221,7 +221,7 @@ class UserDetailsSerializer(serializers.ModelSerializer):
             'id', 'username', 'email', 'phone_number', 'first_name', 
             'last_name', 'date_of_birth', 'avatar', 'address', 
             'longitude', 'latitude', 'is_verified', 'roles',
-            'created_at', 'updated_at'
+            'created_at', 'updated_at', 'description'
         ]
         read_only_fields = [
             'id', 'email', 'phone_number', 'is_verified', 'roles',
@@ -264,7 +264,7 @@ class UserUpdateSerializer(serializers.ModelSerializer):
         model = CustomUser
         fields = [
             'username', 'first_name', 'last_name', 'date_of_birth', 
-            'avatar', 'address', 'longitude', 'latitude', 'roles'
+            'avatar', 'address', 'longitude', 'latitude', 'roles', 'description'
         ]
         extra_kwargs = {
             'username': {'required': False},
@@ -274,6 +274,7 @@ class UserUpdateSerializer(serializers.ModelSerializer):
             'address': {'required': False},
             'longitude': {'required': False},
             'latitude': {'required': False},
+            'description': {'required': False},
         }
     
     def update(self, instance, validated_data):

@@ -5,10 +5,10 @@ from rest_framework.permissions import IsAuthenticated
 from drf_yasg.utils import swagger_auto_schema
 from drf_yasg import openapi
 from django.db.models import Q
-from .models import Master, ServiceType, MasterService
+from .models import Master, MasterService, MasterServiceItems, MasterInMaster
 from .serializers import (
     MasterSerializer, MasterCreateSerializer, MasterUpdateSerializer, MasterNearbySerializer,
-    MasterServiceSerializer
+    MasterServiceSerializer, MasterServiceItemsSerializer, MasterInMasterSerializer
 )
 from .permissions import IsMasterGroup
 
@@ -50,6 +50,10 @@ class MasterProfileView(APIView):
                                     'date_joined': openapi.Schema(type=openapi.TYPE_STRING, format=openapi.FORMAT_DATETIME)
                                 }
                             ),
+                            'category': openapi.Schema(type=openapi.TYPE_ARRAY, items=openapi.Schema(type=openapi.TYPE_STRING)),
+                            'category_data': openapi.Schema(type=openapi.TYPE_ARRAY, items=openapi.Schema(type=openapi.TYPE_STRING)),
+                            'master_in_master_data': openapi.Schema(type=openapi.TYPE_ARRAY, items=openapi.Schema(type=openapi.TYPE_STRING)),
+                            'rating_data': openapi.Schema(type=openapi.TYPE_ARRAY, items=openapi.Schema(type=openapi.TYPE_STRING)),
                             'working_time': openapi.Schema(type=openapi.TYPE_STRING),
                             'phone': openapi.Schema(type=openapi.TYPE_STRING),
                             'description': openapi.Schema(type=openapi.TYPE_STRING),
@@ -727,13 +731,9 @@ class MasterDetailsView(APIView):
 
 class MasterServiceView(APIView):
     """
-    API для управления услугами мастера.
+    API для добавления услуги мастеру.
     
-    Поддерживаемые операции:
-    - GET: получение услуг мастера
-    - POST: добавление услуги мастеру
-    - PUT: обновление услуги мастера
-    - DELETE: удаление услуги у мастера
+    POST: добавление услуги мастеру
     """
     permission_classes = [IsMasterGroup]
     
@@ -745,46 +745,28 @@ class MasterServiceView(APIView):
             return None
     
     @swagger_auto_schema(
-        operation_description="Получить услуги мастера",
-        responses={
-            200: openapi.Response(
-                description="Услуги мастера",
-                schema=openapi.Schema(
+        operation_description="Добавить услугу мастеру",
+        request_body=openapi.Schema(
+            type=openapi.TYPE_OBJECT,
+            properties={
+                'master_id': openapi.Schema(type=openapi.TYPE_INTEGER, description='ID мастера'),
+                'master_items': openapi.Schema(
                     type=openapi.TYPE_ARRAY,
                     items=openapi.Schema(
                         type=openapi.TYPE_OBJECT,
                         properties={
-                            'id': openapi.Schema(type=openapi.TYPE_INTEGER),
-                            'master': openapi.Schema(type=openapi.TYPE_INTEGER),
-                            'name': openapi.Schema(type=openapi.TYPE_STRING),
-                            'price_from': openapi.Schema(type=openapi.TYPE_NUMBER),
-                            'price_to': openapi.Schema(type=openapi.TYPE_NUMBER),
-                            'created_at': openapi.Schema(type=openapi.TYPE_STRING, format=openapi.FORMAT_DATETIME)
-                        }
-                    )
+                            'name': openapi.Schema(type=openapi.TYPE_STRING, description='Название услуги'),
+                            'price_from': openapi.Schema(type=openapi.TYPE_NUMBER, description='Цена от'),
+                            'price_to': openapi.Schema(type=openapi.TYPE_NUMBER, description='Цена до'),
+                            'category': openapi.Schema(type=openapi.TYPE_INTEGER, description='ID категории')
+                        },
+                        required=['name', 'price_from', 'price_to', 'category']
+                    ),
+                    description='Список элементов услуги'
                 )
-            ),
-            404: openapi.Response(description="Профиль мастера не найден"),
-            403: openapi.Response(description="Нет прав доступа")
-        },
-        tags=['Master Services']
-    )
-    def get(self, request):
-        """Получение услуг мастера"""
-        master = self.get_master()
-        if not master:
-            return Response(
-                {'error': 'Профиль мастера не найден'}, 
-                status=status.HTTP_404_NOT_FOUND
-            )
-        
-        master_services = MasterService.objects.filter(master=master)
-        serializer = MasterServiceSerializer(master_services, many=True, context={'request': request})
-        return Response(serializer.data, status=status.HTTP_200_OK)
-    
-    @swagger_auto_schema(
-        operation_description="Добавить услугу мастеру",
-        request_body=MasterServiceSerializer,
+            },
+            required=['master_id', 'master_items']
+        ),
         responses={
             201: openapi.Response(description="Услуга добавлена", schema=MasterServiceSerializer),
             400: openapi.Response(description="Неверные данные"),
@@ -802,11 +784,57 @@ class MasterServiceView(APIView):
                 status=status.HTTP_404_NOT_FOUND
             )
         
+        master_id = request.data.get('master_id')
+        if not master_id:
+            return Response(
+                {'error': 'master_id обязателен'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # Проверяем, что master_id совпадает с текущим мастером
+        if master.id != master_id:
+            return Response(
+                {'error': 'Вы можете добавлять услуги только для своего профиля мастера'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+        
         serializer = MasterServiceSerializer(data=request.data, context={'request': request})
         if serializer.is_valid():
             serializer.save(master=master)
             return Response(serializer.data, status=status.HTTP_201_CREATED)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+
+class MasterServicesByMasterView(APIView):
+    """
+    API для получения услуг мастера по master_id.
+    
+    GET: получение услуг мастера с элементами, сгруппированными по категориям
+    """
+    permission_classes = [IsAuthenticated]
+    
+    @swagger_auto_schema(
+        operation_description="Получить услуги мастера по ID мастера (с элементами, сгруппированными по категориям)",
+        responses={
+            200: openapi.Response(description="Услуги мастера", schema=MasterServiceSerializer(many=True)),
+            404: openapi.Response(description="Мастер не найден"),
+            403: openapi.Response(description="Нет прав доступа")
+        },
+        tags=['Master Services']
+    )
+    def get(self, request, master_id):
+        """Получение услуг мастера"""
+        try:
+            master = Master.objects.get(id=master_id)
+        except Master.DoesNotExist:
+            return Response(
+                {'error': 'Мастер не найден'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+        
+        master_services = MasterService.objects.filter(master=master)
+        serializer = MasterServiceSerializer(master_services, many=True, context={'request': request})
+        return Response(serializer.data, status=status.HTTP_200_OK)
 
 
 class MasterServiceDetailView(APIView):
@@ -930,5 +958,507 @@ class MasterServiceDetailView(APIView):
             )
         
         master_service.delete()
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+class MasterServiceItemsView(APIView):
+    """
+    API для добавления элементов услуги мастера.
+    
+    POST: добавление элементов услуги (multiple)
+    """
+    permission_classes = [IsMasterGroup]
+    
+    @swagger_auto_schema(
+        operation_description="Добавить элементы услуги мастера",
+        request_body=openapi.Schema(
+            type=openapi.TYPE_OBJECT,
+            properties={
+                'master_items': openapi.Schema(
+                    type=openapi.TYPE_ARRAY,
+                    items=openapi.Schema(
+                        type=openapi.TYPE_OBJECT,
+                        properties={
+                            'name': openapi.Schema(type=openapi.TYPE_STRING),
+                            'price_from': openapi.Schema(type=openapi.TYPE_NUMBER),
+                            'price_to': openapi.Schema(type=openapi.TYPE_NUMBER),
+                            'category': openapi.Schema(type=openapi.TYPE_INTEGER)
+                        }
+                    )
+                )
+            }
+        ),
+        responses={
+            201: openapi.Response(description="Элементы добавлены"),
+            400: openapi.Response(description="Неверные данные"),
+            404: openapi.Response(description="Услуга не найдена"),
+            403: openapi.Response(description="Нет прав доступа")
+        },
+        tags=['Master Service Items']
+    )
+    def post(self, request, master_service_id):
+        """Добавление элементов услуги мастера"""
+        try:
+            master_service = MasterService.objects.get(id=master_service_id)
+            # Проверяем, что услуга принадлежит текущему пользователю
+            if master_service.master.user != request.user:
+                return Response(
+                    {'error': 'У вас нет доступа к этой услуге'},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+        except MasterService.DoesNotExist:
+            return Response(
+                {'error': 'Услуга не найдена'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+        
+        master_items = request.data.get('master_items', [])
+        if not isinstance(master_items, list):
+            return Response(
+                {'error': 'master_items должен быть списком'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        created_items = []
+        for item_data in master_items:
+            serializer = MasterServiceItemsSerializer(data=item_data, context={'request': request})
+            if serializer.is_valid():
+                item = serializer.save(master_service=master_service)
+                created_items.append(serializer.data)
+            else:
+                return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        
+        return Response(created_items, status=status.HTTP_201_CREATED)
+
+
+class MasterServiceItemsDetailView(APIView):
+    """
+    API для управления конкретным элементом услуги мастера.
+    
+    Поддерживаемые операции:
+    - GET: получение элемента услуги
+    - PUT: обновление элемента услуги
+    - PATCH: частичное обновление элемента услуги
+    - DELETE: удаление элемента услуги
+    """
+    permission_classes = [IsMasterGroup]
+    
+    def get_object(self, item_id):
+        """Получить элемент услуги мастера"""
+        try:
+            item = MasterServiceItems.objects.get(id=item_id)
+            # Проверяем, что элемент принадлежит текущему пользователю
+            if item.master_service.master.user != self.request.user:
+                return None
+            return item
+        except MasterServiceItems.DoesNotExist:
+            return None
+    
+    @swagger_auto_schema(
+        operation_description="Получить элемент услуги мастера по ID",
+        responses={
+            200: openapi.Response(description="Элемент услуги", schema=MasterServiceItemsSerializer),
+            404: openapi.Response(description="Элемент не найден"),
+            403: openapi.Response(description="Нет прав доступа")
+        },
+        tags=['Master Service Items']
+    )
+    def get(self, request, item_id):
+        """Получение элемента услуги мастера"""
+        item = self.get_object(item_id)
+        if not item:
+            return Response(
+                {'error': 'Элемент не найден'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+        
+        serializer = MasterServiceItemsSerializer(item, context={'request': request})
+        return Response(serializer.data, status=status.HTTP_200_OK)
+    
+    @swagger_auto_schema(
+        operation_description="Обновить элемент услуги мастера",
+        request_body=MasterServiceItemsSerializer,
+        responses={
+            200: openapi.Response(description="Элемент обновлен", schema=MasterServiceItemsSerializer),
+            400: openapi.Response(description="Неверные данные"),
+            404: openapi.Response(description="Элемент не найден"),
+            403: openapi.Response(description="Нет прав доступа")
+        },
+        tags=['Master Service Items']
+    )
+    def put(self, request, item_id):
+        """Обновление элемента услуги мастера"""
+        item = self.get_object(item_id)
+        if not item:
+            return Response(
+                {'error': 'Элемент не найден'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+        
+        serializer = MasterServiceItemsSerializer(item, data=request.data, context={'request': request})
+        if serializer.is_valid():
+            serializer.save()
+            return Response(serializer.data, status=status.HTTP_200_OK)
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+    
+    @swagger_auto_schema(
+        operation_description="Частичное обновление элемента услуги мастера",
+        request_body=MasterServiceItemsSerializer,
+        responses={
+            200: openapi.Response(description="Элемент обновлен", schema=MasterServiceItemsSerializer),
+            400: openapi.Response(description="Неверные данные"),
+            404: openapi.Response(description="Элемент не найден"),
+            403: openapi.Response(description="Нет прав доступа")
+        },
+        tags=['Master Service Items']
+    )
+    def patch(self, request, item_id):
+        """Частичное обновление элемента услуги мастера"""
+        item = self.get_object(item_id)
+        if not item:
+            return Response(
+                {'error': 'Элемент не найден'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+        
+        serializer = MasterServiceItemsSerializer(item, data=request.data, partial=True, context={'request': request})
+        if serializer.is_valid():
+            serializer.save()
+            return Response(serializer.data, status=status.HTTP_200_OK)
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+    
+    @swagger_auto_schema(
+        operation_description="Удалить элемент услуги мастера",
+        responses={
+            204: openapi.Response(description="Элемент удален"),
+            404: openapi.Response(description="Элемент не найден"),
+            403: openapi.Response(description="Нет прав доступа")
+        },
+        tags=['Master Service Items']
+    )
+    def delete(self, request, item_id):
+        """Удаление элемента услуги мастера"""
+        item = self.get_object(item_id)
+        if not item:
+            return Response(
+                {'error': 'Элемент не найден'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+        
+        item.delete()
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+class MasterInMasterView(APIView):
+    """
+    API для добавления мастера в мастера.
+    
+    POST: создание нового пользователя и добавление его в мастера
+    """
+    permission_classes = [IsMasterGroup]
+    
+    @swagger_auto_schema(
+        operation_description="Добавить мастера в мастера (создает нового пользователя)",
+        request_body=openapi.Schema(
+            type=openapi.TYPE_OBJECT,
+            properties={
+                'master': openapi.Schema(type=openapi.TYPE_INTEGER, description='ID мастера'),
+                'category': openapi.Schema(type=openapi.TYPE_INTEGER, description='ID категории'),
+                'first_name': openapi.Schema(type=openapi.TYPE_STRING, description='Имя'),
+                'last_name': openapi.Schema(type=openapi.TYPE_STRING, description='Фамилия'),
+                'phone': openapi.Schema(type=openapi.TYPE_STRING, description='Телефон'),
+                'email': openapi.Schema(type=openapi.TYPE_STRING, description='Email'),
+                'description': openapi.Schema(type=openapi.TYPE_STRING, description='Описание')
+                
+            },
+            required=['master', 'category', 'first_name', 'last_name', 'phone', 'email']
+        ),
+        responses={
+            201: openapi.Response(description="Мастер добавлен", schema=MasterInMasterSerializer),
+            400: openapi.Response(description="Неверные данные"),
+            404: openapi.Response(description="Мастер или категория не найдены"),
+            403: openapi.Response(description="Нет прав доступа")
+        },
+        tags=['Master In Master']
+    )
+    def post(self, request):
+        """Добавление мастера в мастера с созданием нового пользователя"""
+        from django.contrib.auth import get_user_model
+        from django.contrib.auth.models import Group
+        from apps.categories.models import Category
+        import secrets
+        import string
+        
+        User = get_user_model()
+        
+        # Получаем данные
+        master_id = request.data.get('master')
+        category_id = request.data.get('category')
+        first_name = request.data.get('first_name')
+        last_name = request.data.get('last_name')
+        description = request.data.get('description')
+        phone = request.data.get('phone')
+        email = request.data.get('email')
+        
+        # Валидация обязательных полей
+        if not all([master_id, category_id, first_name, last_name, phone, email]):
+            return Response(
+                {'error': 'Все поля обязательны: master, category, first_name, last_name, phone, email'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # Проверяем, что мастер существует
+        try:
+            master = Master.objects.get(id=master_id)
+        except Master.DoesNotExist:
+            return Response(
+                {'error': 'Мастер не найден'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+        
+        # Проверяем, что категория существует
+        try:
+            category = Category.objects.get(id=category_id)
+        except Category.DoesNotExist:
+            return Response(
+                {'error': 'Категория не найдена'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+        
+        # Проверяем, что email уникален
+        if User.objects.filter(email=email).exists():
+            return Response(
+                {'error': 'Пользователь с таким email уже существует'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # Проверяем, что phone уникален
+        if User.objects.filter(phone_number=phone).exists():
+            return Response(
+                {'error': 'Пользователь с таким телефоном уже существует'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # Генерируем уникальный username
+        username = email.split('@')[0]
+        base_username = username
+        counter = 1
+        while User.objects.filter(username=username).exists():
+            username = f"{base_username}{counter}"
+            counter += 1
+        
+        # Генерируем случайный пароль
+        password = ''.join(secrets.choice(string.ascii_letters + string.digits) for _ in range(12))
+        
+        # Создаем пользователя
+        masterinmaster_user = User.objects.create_user(
+            username=username,
+            email=email,
+            password=password,
+            first_name=first_name,
+            last_name=last_name,
+            phone_number=phone,
+            description=description
+        )
+        
+        # Добавляем в группу MasterInMaster
+        try:
+            master_in_master_group = Group.objects.get(name='MasterInMaster')
+            masterinmaster_user.groups.add(master_in_master_group)
+        except Group.DoesNotExist:
+            # Если группа не существует, создаем её
+            master_in_master_group = Group.objects.create(name='MasterInMaster')
+            masterinmaster_user.groups.add(master_in_master_group)
+        
+        # Проверяем, что связь не существует
+        if MasterInMaster.objects.filter(master=master, masterinmaster=masterinmaster_user).exists():
+            return Response(
+                {'error': 'Мастер уже добавлен'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # Создаем MasterInMaster
+        master_in_master = MasterInMaster.objects.create(
+            master=master,
+            masterinmaster=masterinmaster_user,
+            category=category
+        )
+        
+        serializer = MasterInMasterSerializer(master_in_master, context={'request': request})
+        return Response(serializer.data, status=status.HTTP_201_CREATED)
+
+
+class MasterInMasterByMasterView(APIView):
+    """
+    API для получения списка мастеров в мастере по master_id.
+    
+    GET: получение списка мастеров в мастере для конкретного мастера
+    """
+    permission_classes = [IsAuthenticated]
+    
+    @swagger_auto_schema(
+        operation_description="Получить список мастеров в мастере по ID мастера",
+        responses={
+            200: openapi.Response(description="Список мастеров в мастере", schema=MasterInMasterSerializer(many=True)),
+            404: openapi.Response(description="Мастер не найден"),
+            403: openapi.Response(description="Нет прав доступа")
+        },
+        tags=['Master In Master']
+    )
+    def get(self, request, master_id):
+        """Получение списка мастеров в мастере"""
+        try:
+            master = Master.objects.get(id=master_id)
+        except Master.DoesNotExist:
+            return Response(
+                {'error': 'Мастер не найден'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+        
+        master_in_masters = MasterInMaster.objects.filter(master=master).select_related('masterinmaster', 'category')
+        serializer = MasterInMasterSerializer(master_in_masters, many=True, context={'request': request})
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
+
+class MasterInMasterDetailView(APIView):
+    """
+    API для управления конкретным мастером в мастере.
+    
+    Поддерживаемые операции:
+    - PUT/PATCH: обновление мастера в мастере (обновляет CustomUser)
+    - DELETE: удаление мастера из мастера
+    """
+    permission_classes = [IsMasterGroup]
+    
+    def get_object(self, master_in_master_id):
+        """Получить мастера в мастере"""
+        try:
+            return MasterInMaster.objects.get(id=master_in_master_id)
+        except MasterInMaster.DoesNotExist:
+            return None
+    
+    @swagger_auto_schema(
+        operation_description="Обновить мастера в мастере (обновляет данные пользователя)",
+        request_body=openapi.Schema(
+            type=openapi.TYPE_OBJECT,
+            properties={
+                'first_name': openapi.Schema(type=openapi.TYPE_STRING, description='Имя'),
+                'last_name': openapi.Schema(type=openapi.TYPE_STRING, description='Фамилия'),
+                'phone': openapi.Schema(type=openapi.TYPE_STRING, description='Телефон'),
+                'email': openapi.Schema(type=openapi.TYPE_STRING, description='Email'),
+                'category': openapi.Schema(type=openapi.TYPE_INTEGER, description='ID категории')
+            }
+        ),
+        responses={
+            200: openapi.Response(description="Мастер обновлен", schema=MasterInMasterSerializer),
+            400: openapi.Response(description="Неверные данные"),
+            404: openapi.Response(description="Мастер не найден"),
+            403: openapi.Response(description="Нет прав доступа")
+        },
+        tags=['Master In Master']
+    )
+    def put(self, request, master_in_master_id):
+        """Обновление мастера в мастере"""
+        master_in_master = self.get_object(master_in_master_id)
+        if not master_in_master:
+            return Response(
+                {'error': 'Мастер не найден'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+        
+        from django.contrib.auth import get_user_model
+        from apps.categories.models import Category
+        User = get_user_model()
+        
+        # Обновляем данные пользователя
+        user = master_in_master.masterinmaster
+        first_name = request.data.get('first_name')
+        last_name = request.data.get('last_name')
+        phone = request.data.get('phone')
+        email = request.data.get('email')
+        category_id = request.data.get('category')
+        
+        if first_name:
+            user.first_name = first_name
+        if last_name:
+            user.last_name = last_name
+        if phone:
+            # Проверяем уникальность телефона
+            if User.objects.filter(phone_number=phone).exclude(id=user.id).exists():
+                return Response(
+                    {'error': 'Пользователь с таким телефоном уже существует'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            user.phone_number = phone
+        if email:
+            # Проверяем уникальность email
+            if User.objects.filter(email=email).exclude(id=user.id).exists():
+                return Response(
+                    {'error': 'Пользователь с таким email уже существует'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            user.email = email
+            user.username = email.split('@')[0]  # Обновляем username
+        
+        user.save()
+        
+        # Обновляем категорию если передана
+        if category_id:
+            try:
+                category = Category.objects.get(id=category_id)
+                master_in_master.category = category
+                master_in_master.save()
+            except Category.DoesNotExist:
+                return Response(
+                    {'error': 'Категория не найдена'},
+                    status=status.HTTP_404_NOT_FOUND
+                )
+        
+        serializer = MasterInMasterSerializer(master_in_master, context={'request': request})
+        return Response(serializer.data, status=status.HTTP_200_OK)
+    
+    @swagger_auto_schema(
+        operation_description="Частичное обновление мастера в мастере",
+        request_body=openapi.Schema(
+            type=openapi.TYPE_OBJECT,
+            properties={
+                'first_name': openapi.Schema(type=openapi.TYPE_STRING, description='Имя'),
+                'last_name': openapi.Schema(type=openapi.TYPE_STRING, description='Фамилия'),
+                'phone': openapi.Schema(type=openapi.TYPE_STRING, description='Телефон'),
+                'email': openapi.Schema(type=openapi.TYPE_STRING, description='Email'),
+                'category': openapi.Schema(type=openapi.TYPE_INTEGER, description='ID категории')
+            }
+        ),
+        responses={
+            200: openapi.Response(description="Мастер обновлен", schema=MasterInMasterSerializer),
+            400: openapi.Response(description="Неверные данные"),
+            404: openapi.Response(description="Мастер не найден"),
+            403: openapi.Response(description="Нет прав доступа")
+        },
+        tags=['Master In Master']
+    )
+    def patch(self, request, master_in_master_id):
+        """Частичное обновление мастера в мастере"""
+        return self.put(request, master_in_master_id)
+    
+    @swagger_auto_schema(
+        operation_description="Удалить мастера из мастера",
+        responses={
+            204: openapi.Response(description="Мастер удален"),
+            404: openapi.Response(description="Мастер не найден"),
+            403: openapi.Response(description="Нет прав доступа")
+        },
+        tags=['Master In Master']
+    )
+    def delete(self, request, master_in_master_id):
+        """Удаление мастера из мастера"""
+        master_in_master = self.get_object(master_in_master_id)
+        if not master_in_master:
+            return Response(
+                {'error': 'Мастер не найден'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+        
+        master_in_master.delete()
         return Response(status=status.HTTP_204_NO_CONTENT)
 

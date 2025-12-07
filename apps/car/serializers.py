@@ -1,17 +1,19 @@
 from rest_framework import serializers
 from .models import Car
+from apps.categories.serializers import CategorySerializer
+from apps.accounts.serializers import UserSerializer
 
 
 class CarSerializer(serializers.ModelSerializer):
     """Сериализатор для машины"""
-    user_name = serializers.ReadOnlyField(source='user.get_full_name')
-    user_phone = serializers.ReadOnlyField(source='user.phone_number')
+    category = serializers.SerializerMethodField()
+    user = serializers.SerializerMethodField()
     
     class Meta:
         model = Car
         fields = [
-            'id', 'type_car', 'brand', 'model', 'year', 
-            'user', 'user_name', 'user_phone', 'created_at', 'updated_at'
+            'id', 'category', 'brand', 'model', 'year', 
+            'user', 'created_at', 'updated_at'
         ]
         read_only_fields = ['id', 'user', 'created_at', 'updated_at']
     
@@ -20,13 +22,19 @@ class CarSerializer(serializers.ModelSerializer):
         validated_data['user'] = self.context['request'].user
         return super().create(validated_data)
 
+    def get_category(self, obj):
+        return CategorySerializer(obj.category, context=self.context).data
+    
+    def get_user(self, obj):
+        return UserSerializer(obj.user, context=self.context).data
+
 
 class CarCreateSerializer(serializers.ModelSerializer):
     """Сериализатор для создания машины"""
     
     class Meta:
         model = Car
-        fields = ['type_car', 'brand', 'model', 'year']
+        fields = ['category', 'brand', 'model', 'year']
     
     def create(self, validated_data):
         """Создание машины с автоматическим назначением пользователя"""

@@ -1,15 +1,16 @@
 from django.contrib import admin
 from .models import Car
+from apps.categories.models import Category
 
 
 @admin.register(Car)
 class CarAdmin(admin.ModelAdmin):
     """Админка для машин"""
     list_display = [
-        'brand', 'model', 'type_car', 'year', 'user', 'created_at'
+        'brand', 'model', 'category', 'year', 'user', 'created_at'
     ]
     list_filter = [
-        'type_car', 'brand', 'year', 'created_at'
+        'category', 'brand', 'year', 'created_at'
     ]
     search_fields = [
         'brand', 'model', 'user__phone_number', 'user__first_name', 'user__last_name'
@@ -18,7 +19,7 @@ class CarAdmin(admin.ModelAdmin):
     
     fieldsets = (
         ('Основная информация', {
-            'fields': ('brand', 'model', 'type_car', 'year')
+            'fields': ('brand', 'model', 'category', 'year')
         }),
         ('Пользователь', {
             'fields': ('user',)
@@ -34,3 +35,9 @@ class CarAdmin(admin.ModelAdmin):
     def get_queryset(self, request):
         """Оптимизация запросов"""
         return super().get_queryset(request).select_related('user')
+    
+    def formfield_for_foreignkey(self, db_field, request, **kwargs):
+        """Фильтруем категории только по типу BY_CAR"""
+        if db_field.name == 'category':
+            kwargs['queryset'] = Category.objects.filter(type_category='by_car')
+        return super().formfield_for_foreignkey(db_field, request, **kwargs)

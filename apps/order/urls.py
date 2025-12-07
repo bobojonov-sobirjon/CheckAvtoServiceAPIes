@@ -15,5 +15,9 @@ urlpatterns = [
     # Дополнительные операции
     path('<int:order_id>/status/', views.update_order_status, name='update-status'),
     path('<int:order_id>/accept/', views.accept_order, name='accept-order'),
+    
+    # Rating endpoints
+    path('ratings/', views.RatingCreateView.as_view(), name='rating-create'),
+    path('ratings/list/', views.RatingListView.as_view(), name='rating-list'),
 ]
 

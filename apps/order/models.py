@@ -4,6 +4,10 @@ from django.core.exceptions import ValidationError
 from django.utils import timezone
 from datetime import timedelta
 
+from apps.accounts.models import CustomUser
+from apps.car.models import Car
+from apps.categories.models import Category
+
 User = get_user_model()
 
 
@@ -30,6 +34,16 @@ class Order(models.Model):
         related_name='orders',
         verbose_name='Пользователь'
     )
+    car = models.ManyToManyField(
+        Car,
+        related_name='orders',
+        verbose_name='Машина'
+    )
+    category = models.ManyToManyField(
+        Category,
+        related_name='orders',
+        verbose_name='Категория'
+    )
     text = models.TextField(
         verbose_name='Описание заказа',
         help_text='Подробное описание проблемы или услуги'
@@ -45,12 +59,6 @@ class Order(models.Model):
         choices=OrderPriority.choices,
         default=OrderPriority.LOW,
         verbose_name='Приоритет заказа'
-    )
-    data = models.JSONField(
-        default=dict,
-        blank=True,
-        verbose_name='Дополнительные данные',
-        help_text='Дополнительная информация о заказе'
     )
     location = models.TextField(
         verbose_name='Местоположение',
@@ -79,6 +87,9 @@ class Order(models.Model):
         blank=True,
         related_name='orders',
         verbose_name='Мастер'
+    )
+    master_in_master = models.ManyToManyField(
+        CustomUser, related_name='orders_master_in_master', verbose_name='Мастер в мастере', blank=True
     )
     created_at = models.DateTimeField(
         auto_now_add=True,
@@ -135,3 +146,84 @@ class Order(models.Model):
             self.save()
             return True
         return False
+
+
+class Rating(models.Model):
+    """Модель рейтинга для мастеров"""
+    order = models.ForeignKey(
+        Order,
+        on_delete=models.CASCADE,
+        related_name='ratings',
+        verbose_name='Заказ'
+    )
+    user = models.ForeignKey(
+        User,
+        on_delete=models.CASCADE,
+        related_name='given_ratings',
+        verbose_name='Пользователь (оценивающий)'
+    )
+    master = models.ForeignKey(
+        'master.Master',
+        on_delete=models.CASCADE,
+        related_name='ratings',
+        null=True,
+        blank=True,
+        verbose_name='Мастер'
+    )
+    master_in_master = models.ForeignKey(
+        User,
+        on_delete=models.CASCADE,
+        related_name='ratings_as_master_in_master',
+        null=True,
+        blank=True,
+        verbose_name='Мастер в мастере'
+    )
+    rating = models.PositiveIntegerField(
+        verbose_name='Рейтинг',
+        help_text='Рейтинг от 1 до 5'
+    )
+    comment = models.TextField(
+        blank=True,
+        null=True,
+        verbose_name='Комментарий',
+        help_text='Комментарий к рейтингу'
+    )
+    created_at = models.DateTimeField(
+        auto_now_add=True,
+        verbose_name='Дата создания'
+    )
+    updated_at = models.DateTimeField(
+        auto_now=True,
+        verbose_name='Дата обновления'
+    )
+
+    class Meta:
+        verbose_name = 'Рейтинг'
+        verbose_name_plural = 'Рейтинги'
+        ordering = ['-created_at']
+        unique_together = [
+            ['order', 'user', 'master'],
+            ['order', 'user', 'master_in_master']
+        ]
+
+    def __str__(self):
+        if self.master:
+            return f"Рейтинг {self.rating} для мастера {self.master} от {self.user}"
+        elif self.master_in_master:
+            return f"Рейтинг {self.rating} для мастера в мастере {self.master_in_master} от {self.user}"
+        return f"Рейтинг {self.rating} от {self.user}"
+
+    def clean(self):
+        """Валидация модели"""
+        if self.rating < 1 or self.rating > 5:
+            raise ValidationError({'rating': 'Рейтинг должен быть от 1 до 5'})
+        
+        if not self.master and not self.master_in_master:
+            raise ValidationError('Должен быть указан либо мастер, либо мастер в мастере')
+        
+        if self.master and self.master_in_master:
+            raise ValidationError('Нельзя указать одновременно и мастер, и мастер в мастере')
+
+    def save(self, *args, **kwargs):
+        self.clean()
+        super().save(*args, **kwargs)

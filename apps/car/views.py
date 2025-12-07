@@ -195,7 +195,7 @@ class CarStatsView(APIView):
                     type=openapi.TYPE_OBJECT,
                     properties={
                         'total_cars': openapi.Schema(type=openapi.TYPE_INTEGER),
-                        'cars_by_type': openapi.Schema(type=openapi.TYPE_OBJECT),
+                        'cars_by_category': openapi.Schema(type=openapi.TYPE_OBJECT),
                         'cars_by_brand': openapi.Schema(type=openapi.TYPE_OBJECT)
                     }
                 )
@@ -208,10 +208,11 @@ class CarStatsView(APIView):
         """Статистика машин пользователя"""
         cars = self.get_queryset()
         
-        # Статистика по типам
-        cars_by_type = {}
-        for choice in Car.TypeCar.choices:
-            cars_by_type[choice[1]] = cars.filter(type_car=choice[0]).count()
+        # Статистика по категориям
+        cars_by_category = {}
+        for car in cars:
+            category_name = car.category.name if car.category else 'Без категории'
+            cars_by_category[category_name] = cars_by_category.get(category_name, 0) + 1
         
         # Статистика по маркам
         cars_by_brand = {}
@@ -221,6 +222,6 @@ class CarStatsView(APIView):
         
         return Response({
             'total_cars': cars.count(),
-            'cars_by_type': cars_by_type,
+            'cars_by_category': cars_by_category,
             'cars_by_brand': cars_by_brand
         }, status=status.HTTP_200_OK)
