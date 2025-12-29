@@ -56,13 +56,15 @@ class MasterSerializer(serializers.ModelSerializer):
         return MasterImageSerializer(master_images, many=True, context=self.context).data
     
     def get_category_data(self, obj):
-        """Получить данные категорий (icon, name)"""
+        """Получить данные категорий (id, name, icon, type_category)"""
         categories = obj.category.all()
         request = self.context.get('request')
         return [
             {
                 'id': category.id,
                 'name': category.name,
+                'type_category': category.type_category,
+                'type_category_display': category.get_type_category_display(),
                 'icon': request.build_absolute_uri(category.icon.url) if category.icon and request else None
             }
             for category in categories

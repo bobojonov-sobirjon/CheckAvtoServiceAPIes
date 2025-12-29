@@ -50,8 +50,20 @@ class MasterProfileView(APIView):
                                     'date_joined': openapi.Schema(type=openapi.TYPE_STRING, format=openapi.FORMAT_DATETIME)
                                 }
                             ),
-                            'category': openapi.Schema(type=openapi.TYPE_ARRAY, items=openapi.Schema(type=openapi.TYPE_STRING)),
-                            'category_data': openapi.Schema(type=openapi.TYPE_ARRAY, items=openapi.Schema(type=openapi.TYPE_STRING)),
+                            'category_data': openapi.Schema(
+                                type=openapi.TYPE_ARRAY,
+                                items=openapi.Schema(
+                                    type=openapi.TYPE_OBJECT,
+                                    properties={
+                                        'id': openapi.Schema(type=openapi.TYPE_INTEGER, description='ID категории'),
+                                        'name': openapi.Schema(type=openapi.TYPE_STRING, description='Название категории'),
+                                        'type_category': openapi.Schema(type=openapi.TYPE_STRING, description='Тип категории (by_master, by_car, by_order)'),
+                                        'type_category_display': openapi.Schema(type=openapi.TYPE_STRING, description='Отображаемое название типа категории'),
+                                        'icon': openapi.Schema(type=openapi.TYPE_STRING, description='URL иконки категории', format=openapi.FORMAT_URI)
+                                    }
+                                ),
+                                description='Данные категорий мастера (id, name, type_category, type_category_display, icon)'
+                            ),
                             'master_in_master_data': openapi.Schema(type=openapi.TYPE_ARRAY, items=openapi.Schema(type=openapi.TYPE_STRING)),
                             'rating_data': openapi.Schema(type=openapi.TYPE_ARRAY, items=openapi.Schema(type=openapi.TYPE_STRING)),
                             'working_time': openapi.Schema(type=openapi.TYPE_STRING),
@@ -113,6 +125,12 @@ class MasterProfileView(APIView):
                     ), 
                     description='Список услуг мастера'
                 ),
+                'category': openapi.Schema(
+                    type=openapi.TYPE_ARRAY,
+                    items=openapi.Schema(type=openapi.TYPE_INTEGER),
+                    description='Список ID категорий. Необязательно. Пример: [1, 2, 3]',
+                    example=[1, 2]
+                ),
                 'card_number': openapi.Schema(type=openapi.TYPE_STRING, description='Номер карты'),
                 'card_expiry_month': openapi.Schema(type=openapi.TYPE_INTEGER, description='Месяц истечения'),
                 'card_expiry_year': openapi.Schema(type=openapi.TYPE_INTEGER, description='Год истечения'),
@@ -143,6 +161,20 @@ class MasterProfileView(APIView):
                         'card_expiry_year': openapi.Schema(type=openapi.TYPE_INTEGER),
                         'card_cvv': openapi.Schema(type=openapi.TYPE_STRING),
                         'reserved_amount': openapi.Schema(type=openapi.TYPE_NUMBER),
+                        'category_data': openapi.Schema(
+                            type=openapi.TYPE_ARRAY,
+                            items=openapi.Schema(
+                                type=openapi.TYPE_OBJECT,
+                                properties={
+                                    'id': openapi.Schema(type=openapi.TYPE_INTEGER, description='ID категории'),
+                                    'name': openapi.Schema(type=openapi.TYPE_STRING, description='Название категории'),
+                                    'type_category': openapi.Schema(type=openapi.TYPE_STRING, description='Тип категории (by_master, by_car, by_order)'),
+                                    'type_category_display': openapi.Schema(type=openapi.TYPE_STRING, description='Отображаемое название типа категории'),
+                                    'icon': openapi.Schema(type=openapi.TYPE_STRING, description='URL иконки категории', format=openapi.FORMAT_URI)
+                                }
+                            ),
+                            description='Данные категорий мастера (id, name, type_category, type_category_display, icon)'
+                        ),
                         'created_at': openapi.Schema(type=openapi.TYPE_STRING, format=openapi.FORMAT_DATETIME),
                         'updated_at': openapi.Schema(type=openapi.TYPE_STRING, format=openapi.FORMAT_DATETIME),
                         'last_activity': openapi.Schema(type=openapi.TYPE_STRING, format=openapi.FORMAT_DATETIME)
@@ -306,6 +338,18 @@ class MasterListView(APIView):
                                     'card_expiry_year': openapi.Schema(type=openapi.TYPE_INTEGER),
                                     'card_cvv': openapi.Schema(type=openapi.TYPE_STRING),
                                     'reserved_amount': openapi.Schema(type=openapi.TYPE_NUMBER),
+                                    'category_data': openapi.Schema(
+                                        type=openapi.TYPE_ARRAY,
+                                        items=openapi.Schema(
+                                            type=openapi.TYPE_OBJECT,
+                                            properties={
+                                                'id': openapi.Schema(type=openapi.TYPE_INTEGER, description='ID категории'),
+                                                'name': openapi.Schema(type=openapi.TYPE_STRING, description='Название категории'),
+                                                'icon': openapi.Schema(type=openapi.TYPE_STRING, description='URL иконки категории', format=openapi.FORMAT_URI)
+                                            }
+                                        ),
+                                        description='Данные категорий мастера (id, name, icon)'
+                                    ),
                                     'created_at': openapi.Schema(type=openapi.TYPE_STRING, format=openapi.FORMAT_DATETIME),
                                     'updated_at': openapi.Schema(type=openapi.TYPE_STRING, format=openapi.FORMAT_DATETIME),
                                     'last_activity': openapi.Schema(type=openapi.TYPE_STRING, format=openapi.FORMAT_DATETIME)
