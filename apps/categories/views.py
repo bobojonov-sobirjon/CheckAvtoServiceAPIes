@@ -45,5 +45,5 @@ class CategoryListAPIView(APIView):
         else:
             categories = Category.objects.all()
         
-        serializer = CategorySerializer(categories, many=True)
+        serializer = CategorySerializer(categories, many=True, context={'request': request})
         return Response(serializer.data)

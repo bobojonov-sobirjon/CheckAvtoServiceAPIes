@@ -11,7 +11,7 @@ class Category(models.Model):
     
     name = models.CharField(max_length=255, verbose_name='Название категории')
     type_category = models.CharField(max_length=255, verbose_name='Тип категории', choices=TypeCategory.choices)
-    icon = models.ImageField(upload_to='categories/icons/', verbose_name='Иконка категории', null=True, blank=True)
+    icon = models.FileField(upload_to='categories/icons/', verbose_name='Иконка категории', null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True, verbose_name='Дата создания')
     updated_at = models.DateTimeField(auto_now=True, verbose_name='Дата обновления')
     
