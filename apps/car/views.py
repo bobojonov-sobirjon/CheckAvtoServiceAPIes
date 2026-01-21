@@ -1,8 +1,8 @@
 from rest_framework.views import APIView
 from rest_framework import status
 from rest_framework.response import Response
-from drf_yasg.utils import swagger_auto_schema
-from drf_yasg import openapi
+from drf_spectacular.utils import extend_schema
+from drf_spectacular.types import OpenApiTypes
 from .models import Car
 from .serializers import CarSerializer, CarCreateSerializer
 from .permissions import IsDriverGroup
@@ -16,35 +16,29 @@ class CarListCreateView(APIView):
         """Получение только машин текущего пользователя"""
         return Car.objects.filter(user=self.request.user)
     
-    @swagger_auto_schema(
-        operation_description="Получить список машин пользователя",
-        security=[{'Bearer': []}],
+    @extend_schema(
+        summary="Получить список машин",
+        description="Получить список машин пользователя",
         responses={
-            200: openapi.Response(
-                description="Список машин",
-                schema=CarSerializer
-            ),
-            403: openapi.Response(description="Нет прав доступа")
+            200: CarSerializer,
+            403: {'type': 'object', 'properties': {'detail': {'type': 'string'}}}
         },
         tags=['Cars']
     )
     def get(self, request):
         """Список машин пользователя"""
         cars = self.get_queryset()
-        serializer = CarSerializer(cars, many=True)
+        serializer = CarSerializer(cars, many=True, context={'request': request})
         return Response(serializer.data, status=status.HTTP_200_OK)
     
-    @swagger_auto_schema(
-        operation_description="Создать новую машину",
-        request_body=CarCreateSerializer,
-        security=[{'Bearer': []}],
+    @extend_schema(
+        summary="Создать новую машину",
+        description="Создать новую машину",
+        request=CarCreateSerializer,
         responses={
-            201: openapi.Response(
-                description="Машина создана",
-                schema=CarSerializer
-            ),
-            400: openapi.Response(description="Неверные данные"),
-            403: openapi.Response(description="Нет прав доступа")
+            201: CarSerializer,
+            400: {'type': 'object', 'properties': {'detail': {'type': 'string'}}},
+            403: {'type': 'object', 'properties': {'detail': {'type': 'string'}}}
         },
         tags=['Cars']
     )
@@ -56,7 +50,7 @@ class CarListCreateView(APIView):
             response_serializer = CarSerializer(car, context={'request': request})
             return Response(response_serializer.data, status=status.HTTP_201_CREATED)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
-    
+
 
 class CarDetailView(APIView):
     """Детали, обновление и удаление машины - только для группы Driver"""
@@ -69,16 +63,13 @@ class CarDetailView(APIView):
         except Car.DoesNotExist:
             return None
     
-    @swagger_auto_schema(
-        operation_description="Получить детали машины",
-        security=[{'Bearer': []}],
+    @extend_schema(
+        summary="Получить детали машины",
+        description="Получить детали машины",
         responses={
-            200: openapi.Response(
-                description="Детали машины",
-                schema=CarSerializer
-            ),
-            404: openapi.Response(description="Машина не найдена"),
-            403: openapi.Response(description="Нет прав доступа")
+            200: CarSerializer,
+            404: {'type': 'object', 'properties': {'error': {'type': 'string'}}},
+            403: {'type': 'object', 'properties': {'detail': {'type': 'string'}}}
         },
         tags=['Cars']
     )
@@ -94,18 +85,15 @@ class CarDetailView(APIView):
         serializer = CarSerializer(car, context={'request': request})
         return Response(serializer.data, status=status.HTTP_200_OK)
     
-    @swagger_auto_schema(
-        operation_description="Обновить машину",
-        security=[{'Bearer': []}],
-        request_body=CarSerializer,
+    @extend_schema(
+        summary="Обновить машину",
+        description="Обновить машину",
+        request=CarSerializer,
         responses={
-            200: openapi.Response(
-                description="Машина обновлена",
-                schema=CarSerializer
-            ),
-            400: openapi.Response(description="Неверные данные"),
-            404: openapi.Response(description="Машина не найдена"),
-            403: openapi.Response(description="Нет прав доступа")
+            200: CarSerializer,
+            400: {'type': 'object', 'properties': {'detail': {'type': 'string'}}},
+            404: {'type': 'object', 'properties': {'error': {'type': 'string'}}},
+            403: {'type': 'object', 'properties': {'detail': {'type': 'string'}}}
         },
         tags=['Cars']
     )
@@ -124,18 +112,15 @@ class CarDetailView(APIView):
             return Response(serializer.data, status=status.HTTP_200_OK)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
     
-    @swagger_auto_schema(
-        operation_description="Частичное обновление машины",
-        security=[{'Bearer': []}],
-        request_body=CarSerializer,
+    @extend_schema(
+        summary="Частичное обновление машины",
+        description="Частичное обновление машины",
+        request=CarSerializer,
         responses={
-            200: openapi.Response(
-                description="Машина обновлена",
-                schema=CarSerializer
-            ),
-            400: openapi.Response(description="Неверные данные"),
-            404: openapi.Response(description="Машина не найдена"),
-            403: openapi.Response(description="Нет прав доступа")
+            200: CarSerializer,
+            400: {'type': 'object', 'properties': {'detail': {'type': 'string'}}},
+            404: {'type': 'object', 'properties': {'error': {'type': 'string'}}},
+            403: {'type': 'object', 'properties': {'detail': {'type': 'string'}}}
         },
         tags=['Cars']
     )
@@ -154,13 +139,13 @@ class CarDetailView(APIView):
             return Response(serializer.data, status=status.HTTP_200_OK)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
     
-    @swagger_auto_schema(
-        operation_description="Удалить машину",
-        security=[{'Bearer': []}],
+    @extend_schema(
+        summary="Удалить машину",
+        description="Удалить машину",
         responses={
-            204: openapi.Response(description="Машина удалена"),
-            404: openapi.Response(description="Машина не найдена"),
-            403: openapi.Response(description="Нет прав доступа")
+            204: {'description': 'Машина удалена'},
+            404: {'type': 'object', 'properties': {'error': {'type': 'string'}}},
+            403: {'type': 'object', 'properties': {'detail': {'type': 'string'}}}
         },
         tags=['Cars']
     )
@@ -185,22 +170,19 @@ class CarStatsView(APIView):
         """Получение только машин текущего пользователя"""
         return Car.objects.filter(user=self.request.user)
     
-    @swagger_auto_schema(
-        operation_description="Получить статистику машин пользователя",
-        security=[{'Bearer': []}],
+    @extend_schema(
+        summary="Получить статистику машин",
+        description="Получить статистику машин пользователя",
         responses={
-            200: openapi.Response(
-                description="Статистика машин",
-                schema=openapi.Schema(
-                    type=openapi.TYPE_OBJECT,
-                    properties={
-                        'total_cars': openapi.Schema(type=openapi.TYPE_INTEGER),
-                        'cars_by_category': openapi.Schema(type=openapi.TYPE_OBJECT),
-                        'cars_by_brand': openapi.Schema(type=openapi.TYPE_OBJECT)
-                    }
-                )
-            ),
-            403: openapi.Response(description="Нет прав доступа")
+            200: {
+                'type': 'object',
+                'properties': {
+                    'total_cars': {'type': 'integer'},
+                    'cars_by_category': {'type': 'object'},
+                    'cars_by_brand': {'type': 'object'}
+                }
+            },
+            403: {'type': 'object', 'properties': {'detail': {'type': 'string'}}}
         },
         tags=['Cars']
     )

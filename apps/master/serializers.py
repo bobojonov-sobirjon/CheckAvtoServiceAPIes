@@ -1,7 +1,13 @@
 from rest_framework import serializers
-from .models import Master, MasterService, MasterImage, MasterServiceItems, MasterInMaster
+from .models import Master, MasterService, MasterImage, MasterServiceItems, MasterEmployee
 from apps.categories.models import Category
 from apps.order.models import Rating
+from django.contrib.auth import get_user_model
+
+User = get_user_model()
+
+# Import UserDetailsSerializer for master employees
+from apps.accounts.serializers import UserDetailsSerializer
 
 
 class MasterImageSerializer(serializers.ModelSerializer):
@@ -19,20 +25,21 @@ class MasterSerializer(serializers.ModelSerializer):
     services = serializers.SerializerMethodField()
     images = serializers.SerializerMethodField()
     category_data = serializers.SerializerMethodField()
-    master_in_master_data = serializers.SerializerMethodField()
     rating_data = serializers.SerializerMethodField()
+    masters = serializers.SerializerMethodField()
+    distance = serializers.SerializerMethodField()
     
     class Meta:
         model = Master
         fields = [
-            'id', 'user_info', 'city', 'address', 
+            'id', 'user_info', 'name', 'city', 'address', 
             'latitude', 'longitude', 'phone', 'working_time', 'services',
             'card_number', 'card_expiry_month', 'card_expiry_year', 
             'card_cvv', 'balance', 'reserved_amount', 'description', 'images', 
-            'category_data', 'master_in_master_data', 'rating_data', 'created_at', 'updated_at', 
+            'category_data', 'rating_data', 'masters', 'distance', 'created_at', 'updated_at', 
             'last_activity'
         ]
-        read_only_fields = ['id', 'user', 'created_at', 'updated_at', 'last_activity']
+        read_only_fields = ['id', 'user', 'created_at', 'updated_at', 'last_activity', 'distance']
     
     def get_user_info(self, obj):
         """Получить полную информацию о пользователе"""
@@ -70,33 +77,6 @@ class MasterSerializer(serializers.ModelSerializer):
             for category in categories
         ]
     
-    def get_master_in_master_data(self, obj):
-        """Получить данные мастеров в мастере"""
-        master_in_masters = MasterInMaster.objects.filter(master=obj)
-        request = self.context.get('request')
-        return [
-            {
-                'id': mim.id,
-                'masterinmaster_data': {
-                    'id': mim.masterinmaster.id,
-                    'full_name': mim.masterinmaster.get_full_name(),
-                    'phone_number': mim.masterinmaster.phone_number,
-                    'email': mim.masterinmaster.email,
-                    'first_name': mim.masterinmaster.first_name,
-                    'last_name': mim.masterinmaster.last_name
-                },
-                'category_data': {
-                    'id': mim.category.id,
-                    'name': mim.category.name,
-                    'icon': request.build_absolute_uri(mim.category.icon.url) if mim.category and mim.category.icon and request else None
-                } if mim.category else None,
-                'rating_data': self._get_rating_data_for_master_in_master(mim.masterinmaster),
-                'created_at': mim.created_at,
-                'updated_at': mim.updated_at
-            }
-            for mim in master_in_masters
-        ]
-    
     def get_rating_data(self, obj):
         """Получить данные рейтинга для мастера"""
         return self._get_rating_data_for_master(obj)
@@ -129,33 +109,31 @@ class MasterSerializer(serializers.ModelSerializer):
             ]
         }
     
-    def _get_rating_data_for_master_in_master(self, master_in_master_user):
-        """Получить данные рейтинга для мастера в мастере"""
-        ratings = Rating.objects.filter(master_in_master=master_in_master_user)
-        if not ratings.exists():
-            return {
-                'average_rating': 0,
-                'total_ratings': 0,
-                'ratings': []
-            }
+    def get_masters(self, obj):
+        """Получить всех сотрудников мастерской (сначала владелец, потом добавленные)"""
+        request = self.context.get('request')
+        masters_list = []
         
-        total_ratings = ratings.count()
-        average_rating = sum(r.rating for r in ratings) / total_ratings
+        # Сначала добавляем владельца (который создал мастерскую)
+        owner_data = UserDetailsSerializer(obj.user, context={'request': request}).data
+        owner_data['is_owner'] = True
+        owner_data['added_at'] = obj.created_at
+        masters_list.append(owner_data)
         
-        return {
-            'average_rating': round(average_rating, 2),
-            'total_ratings': total_ratings,
-            'ratings': [
-                {
-                    'id': r.id,
-                    'rating': r.rating,
-                    'comment': r.comment,
-                    'user_name': r.user.get_full_name(),
-                    'created_at': r.created_at
-                }
-                for r in ratings[:10]  # Последние 10 рейтингов
-            ]
-        }
+        # Затем добавляем всех сотрудников
+        employees = MasterEmployee.objects.filter(master=obj).select_related('employee')
+        for emp in employees:
+            employee_data = UserDetailsSerializer(emp.employee, context={'request': request}).data
+            employee_data['is_owner'] = False
+            employee_data['added_at'] = emp.added_at
+            masters_list.append(employee_data)
+        
+        return masters_list
+    
+    def get_distance(self, obj):
+        """Получить расстояние от пользователя (если было вычислено)"""
+        # Если расстояние было добавлено во view, возвращаем его
+        return getattr(obj, 'distance', None)
     
     def validate_latitude(self, value):
         """Валидация широты"""
@@ -183,23 +161,38 @@ class MasterCreateSerializer(serializers.ModelSerializer):
         child=serializers.DictField(),
         required=False,
         allow_empty=True,
-        write_only=True
+        write_only=True,
+        help_text="Список услуг мастера. Пример: [{'name': 'Замена масла', 'price_from': 1000, 'price_to': 2000, 'category': 1}]"
     )
     category = serializers.ListField(
         child=serializers.IntegerField(),
         required=False,
         allow_empty=True,
         write_only=True,
-        help_text="Список ID категорий [1, 2, 3, ...]"
+        help_text="Список ID категорий [1, 2, 3, ...]. Категории должны быть типа 'by_master'"
     )
     
     class Meta:
         model = Master
         fields = [
-            'city', 'address', 'latitude', 'longitude', 'services', 'category',
-            'card_number', 'card_expiry_month', 'card_expiry_year', 
-            'card_cvv'
+            'name', 'city', 'address', 'latitude', 'longitude', 'phone', 'working_time',
+            'description', 'services', 'category', 'card_number', 
+            'card_expiry_month', 'card_expiry_year', 'card_cvv'
         ]
+        extra_kwargs = {
+            'name': {'required': False, 'allow_blank': True},
+            'city': {'required': False, 'allow_blank': True},
+            'address': {'required': False, 'allow_blank': True},
+            'latitude': {'required': False},
+            'longitude': {'required': False},
+            'phone': {'required': False, 'allow_blank': True},
+            'working_time': {'required': False, 'allow_blank': True},
+            'description': {'required': False, 'allow_blank': True, 'allow_null': True},
+            'card_number': {'required': False, 'allow_blank': True},
+            'card_expiry_month': {'required': False},
+            'card_expiry_year': {'required': False},
+            'card_cvv': {'required': False, 'allow_blank': True},
+        }
     
     def validate_latitude(self, value):
         """Валидация широты"""
@@ -220,16 +213,20 @@ class MasterCreateSerializer(serializers.ModelSerializer):
         if not isinstance(value, list):
             raise serializers.ValidationError("Услуги должны быть списком")
         
-        # Проверяем, что каждый элемент - это объект с name, price_from и price_to
+        # Проверяем, что каждый элемент - это объект с name, price_from, price_to и category
         for service in value:
             if not isinstance(service, dict):
                 raise serializers.ValidationError("Каждая услуга должна быть объектом")
-            if 'name' not in service:
-                raise serializers.ValidationError("Каждая услуга должна содержать 'name'")
-            if 'price_from' not in service:
-                raise serializers.ValidationError("Каждая услуга должна содержать 'price_from'")
-            if 'price_to' not in service:
-                raise serializers.ValidationError("Каждая услуга должна содержать 'price_to'")
+            required_fields = ['name', 'price_from', 'price_to', 'category']
+            for field in required_fields:
+                if field not in service:
+                    raise serializers.ValidationError(f"Каждая услуга должна содержать '{field}'")
+            
+            # Проверяем, что категория существует
+            try:
+                Category.objects.get(id=service['category'])
+            except Category.DoesNotExist:
+                raise serializers.ValidationError(f"Категория с ID {service['category']} не найдена")
         
         return value
     
@@ -248,24 +245,38 @@ class MasterCreateSerializer(serializers.ModelSerializer):
     
     def create(self, validated_data):
         """Создание мастера с автоматическим назначением пользователя"""
+        from django.contrib.auth.models import Group
+        
         services_data = validated_data.pop('services', [])
         category_ids = validated_data.pop('category', [])
-        validated_data['user'] = self.context['request'].user
+        user = self.context['request'].user
+        validated_data['user'] = user
         
         master = super().create(validated_data)
+        
+        # Добавляем пользователя в группу Master (если еще не в ней)
+        master_group, created = Group.objects.get_or_create(name='Master')
+        if not user.groups.filter(name='Master').exists():
+            user.groups.add(master_group)
         
         # Добавляем категории
         if category_ids:
             master.category.set(category_ids)
         
         # Создаем услуги мастера
-        for service_data in services_data:
-            MasterService.objects.create(
-                master=master,
-                name=service_data['name'],
-                price_from=service_data['price_from'],
-                price_to=service_data['price_to']
-            )
+        if services_data:
+            # Создаем один MasterService для всех items
+            master_service = MasterService.objects.create(master=master)
+            
+            # Создаем MasterServiceItems для каждой услуги
+            for service_data in services_data:
+                MasterServiceItems.objects.create(
+                    master_service=master_service,
+                    name=service_data['name'],
+                    price_from=service_data['price_from'],
+                    price_to=service_data['price_to'],
+                    category_id=service_data['category']
+                )
         
         return master
 
@@ -516,31 +527,60 @@ class MasterServiceSerializer(serializers.ModelSerializer):
         return super().update(instance, validated_data)
 
 
-class MasterInMasterSerializer(serializers.ModelSerializer):
-    """Сериализатор для мастера в мастере"""
-    masterinmaster_name = serializers.CharField(source='masterinmaster.get_full_name', read_only=True)
-    masterinmaster_phone = serializers.CharField(source='masterinmaster.phone_number', read_only=True)
-    masterinmaster_id = serializers.IntegerField(source='masterinmaster.id', read_only=True)
-    category_data = serializers.SerializerMethodField()
+class MasterEmployeeCreateSerializer(serializers.Serializer):
+    """Сериализатор для добавления сотрудника к мастерской"""
+    master_id = serializers.IntegerField(
+        required=True,
+        help_text="ID мастерской"
+    )
+    user_id = serializers.IntegerField(
+        required=True,
+        help_text="ID пользователя для добавления"
+    )
     
-    class Meta:
-        model = MasterInMaster
-        fields = [
-            'id', 'master', 'masterinmaster_id', 'masterinmaster_name', 
-            'masterinmaster_phone', 'category', 'category_data', 'created_at', 'updated_at'
-        ]
-        read_only_fields = ['id', 'created_at', 'updated_at']
+    def validate_master_id(self, value):
+        """Валидация master_id"""
+        try:
+            Master.objects.get(id=value)
+        except Master.DoesNotExist:
+            raise serializers.ValidationError("Мастерская не найдена")
+        return value
     
-    def get_category_data(self, obj):
-        """Получить данные категории (icon, name)"""
-        if not obj.category:
-            return None
+    def validate_user_id(self, value):
+        """Валидация user_id"""
+        try:
+            User.objects.get(id=value)
+        except User.DoesNotExist:
+            raise serializers.ValidationError("Пользователь не найден")
+        return value
+    
+    def validate(self, attrs):
+        """Дополнительная валидация"""
+        master_id = attrs.get('master_id')
+        user_id = attrs.get('user_id')
         
-        request = self.context.get('request')
-        return {
-            'id': obj.category.id,
-            'name': obj.category.name,
-            'icon': request.build_absolute_uri(obj.category.icon.url) if obj.category.icon and request else None
-        }
-
-
+        master = Master.objects.get(id=master_id)
+        user = User.objects.get(id=user_id)
+        
+        # Проверка, что пользователь не является владельцем
+        if master.user.id == user.id:
+            raise serializers.ValidationError({
+                'user_id': 'Владелец уже добавлен автоматически'
+            })
+        
+        # Проверка, что сотрудник еще не добавлен в эту мастерскую
+        if MasterEmployee.objects.filter(master=master, employee=user).exists():
+            raise serializers.ValidationError({
+                'user_id': 'Этот пользователь уже добавлен в эту мастерскую'
+            })
+        
+        # Проверка, что пользователь не работает в другой мастерской
+        existing_employment = MasterEmployee.objects.filter(employee=user).exclude(master=master).first()
+        if existing_employment:
+            owner_name = existing_employment.master.user.get_full_name() or existing_employment.master.user.phone_number
+            raise serializers.ValidationError({
+                'user_id': f'Этот пользователь уже является сотрудником мастерской "{owner_name}". '
+                          f'Один пользователь может работать только в одной мастерской.'
+            })
+        
+        return attrs

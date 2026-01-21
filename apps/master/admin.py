@@ -1,6 +1,6 @@
 from django.contrib import admin
 from django import forms
-from .models import Master, MasterService, MasterServiceItems, MasterInMaster
+from .models import Master, MasterService, MasterServiceItems, MasterEmployee
 from apps.categories.models import Category
 
 
@@ -40,42 +40,30 @@ class MasterServiceItemsInline(admin.TabularInline):
         return super().formfield_for_foreignkey(db_field, request, **kwargs)
 
 
-class MasterInMasterInline(admin.TabularInline):
-    """Инлайн для мастеров в мастере"""
-    model = MasterInMaster
-    extra = 1
-    fields = ['masterinmaster', 'category', 'created_at', 'updated_at']
-    readonly_fields = ['created_at', 'updated_at']
-    ordering = ['-created_at']
-    
-    def formfield_for_foreignkey(self, db_field, request, **kwargs):
-        """Фильтруем категории только по типу BY_MASTER"""
-        if db_field.name == 'category':
-            kwargs['queryset'] = Category.objects.filter(type_category='by_master')
-        return super().formfield_for_foreignkey(db_field, request, **kwargs)
-
-
 @admin.register(Master)
 class MasterAdmin(admin.ModelAdmin):
     """Админка для мастеров"""
     form = MasterAdminForm
     
+    def get_category(self, obj):
+        return ", ".join([category.name for category in obj.category.all()])
+    get_category.short_description = 'Категория'
+    
     list_display = [
-        'full_name', 'phone_number', 'city', 'services_display', 'created_at'
+        'full_name', 'name', 'phone_number', 'city', 'get_category', 'latitude', 'longitude', 'created_at'
     ]
     list_filter = [
         'city', 'created_at'
     ]
     search_fields = [
         'user__phone_number', 'user__first_name', 'user__last_name', 
-        'city'
+        'name', 'city'
     ]
     ordering = ['-created_at']
-    inlines = [MasterInMasterInline]
     
     fieldsets = (
         ('Пользователь', {
-            'fields': ('user', 'category')
+            'fields': ('user', 'name', 'category', 'description')
         }),
         ('Местоположение', {
             'fields': ('city', 'address', 'latitude', 'longitude')
@@ -128,4 +116,18 @@ class MasterServiceAdmin(admin.ModelAdmin):
     def items_count(self, obj):
         return obj.master_service_items.count()
     items_count.short_description = 'Количество элементов'
+
+
+@admin.register(MasterEmployee)
+class MasterEmployeeAdmin(admin.ModelAdmin):
+    """Админка для сотрудников мастерской"""
+    list_display = ('id', 'master', 'employee', 'added_at')
+    list_filter = ('added_at',)
+    search_fields = ('master__user__email', 'employee__email', 'employee__phone_number')
+    readonly_fields = ('added_at',)
+    
+    def get_readonly_fields(self, request, obj=None):
+        if obj:  # При редактировании
+            return self.readonly_fields + ('master', 'employee')
+        return self.readonly_fields
 

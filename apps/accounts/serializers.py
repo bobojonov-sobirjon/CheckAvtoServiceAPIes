@@ -4,6 +4,26 @@ import re
 from .models import CustomUser, FAQ
 
 
+class TelegramChatIdSerializer(serializers.Serializer):
+    """Сериализатор для обновления Telegram Chat ID"""
+    chat_id = serializers.CharField(
+        max_length=50,
+        required=True,
+        help_text="Ваш Telegram Chat ID"
+    )
+    
+    def validate_chat_id(self, value):
+        """Валидация Chat ID"""
+        if not value:
+            raise ValidationError("Chat ID обязателен")
+        
+        # Простая валидация - Chat ID должен быть числом или начинаться с @
+        if not (value.isdigit() or value.startswith('@')):
+            raise ValidationError("Неверный формат Chat ID. Используйте числовой ID или @username")
+        
+        return value
+
+
 def validate_email_format(value):
     """Проверка формата email"""
     if not value:
@@ -67,9 +87,9 @@ class IdentifierSerializer(serializers.Serializer):
     """Сериализатор для идентификатора (email или номер телефона)"""
     identifier = serializers.CharField(max_length=255, required=True)
     role = serializers.ChoiceField(
-        choices=['Driver', 'Master'],
+        choices=['Driver', 'Master', 'Owner'],
         required=True,
-        help_text="Роль пользователя: Driver или Master (обязательно)."
+        help_text="Роль пользователя: Driver, Master или Owner (обязательно)."
     )
     
     def validate_identifier(self, value):
@@ -96,8 +116,8 @@ class IdentifierSerializer(serializers.Serializer):
     
     def validate_role(self, value):
         """Проверка роли пользователя"""
-        if value and value not in ['Driver', 'Master']:
-            raise ValidationError("Роль должна быть 'Driver' или 'Master'")
+        if value and value not in ['Driver', 'Master', 'Owner']:
+            raise ValidationError("Неверная роль")
         return value
 
 
@@ -115,9 +135,9 @@ class SMSVerificationSerializer(serializers.Serializer):
     identifier = serializers.CharField(max_length=255, required=True)
     sms_code = serializers.CharField(max_length=4, min_length=4, required=True)
     role = serializers.ChoiceField(
-        choices=['Driver', 'Master'],
+        choices=['Driver', 'Master', 'Owner'],
         required=True,
-        help_text="Роль пользователя: Driver или Master (обязательно)."
+        help_text="Роль пользователя: Driver, Master или Owner (обязательно)."
     )
     
     def validate_identifier(self, value):
@@ -159,34 +179,60 @@ class SMSVerificationSerializer(serializers.Serializer):
     
     def validate_role(self, value):
         """Проверка роли пользователя"""
-        if value and value not in ['Driver', 'Master']:
-            raise ValidationError("Роль должна быть 'Driver' или 'Master'")
+        if value and value not in ['Driver', 'Master', 'Owner']:
+            raise ValidationError("Неверная роль")
         return value
 
 
 class UserSerializer(serializers.ModelSerializer):
     """Сериализатор для данных пользователя"""
     roles = serializers.SerializerMethodField()
+    balance = serializers.SerializerMethodField()
     
     class Meta:
         model = CustomUser
-        fields = ['id', 'phone_number', 'first_name', 'last_name', 'email', 'description', 'is_verified', 'created_at', 'roles']
-        read_only_fields = ['id', 'created_at', 'roles']
+        fields = ['id', 'private_id', 'phone_number', 'first_name', 'last_name', 'email', 'description', 'is_verified', 'created_at', 'roles', 'balance']
+        read_only_fields = ['id', 'private_id', 'created_at', 'roles', 'balance']
     
     def get_roles(self, obj):
-        """Получение всех ролей пользователя"""
+        """Получение всех ролей пользователя с полной информацией"""
         # Check if obj is a model instance (not a dictionary)
         if hasattr(obj, 'groups'):
             try:
                 groups = obj.groups.all()
                 if groups.exists():
-                    return [group.name for group in groups]
+                    return [
+                        {
+                            'id': group.id,
+                            'name': group.name
+                        }
+                        for group in groups
+                    ]
             except Exception as e:
                 # Log the error for debugging
                 import logging
                 logger = logging.getLogger(__name__)
                 logger.error(f"Error getting roles for user {obj.id}: {str(e)}")
         return []
+    
+    def get_balance(self, obj):
+        """Получение баланса пользователя"""
+        try:
+            from .models import UserBalance
+            balance = UserBalance.get_or_create_balance(obj)
+            return {
+                'amount': str(balance.amount),
+                'updated_at': balance.updated_at
+            }
+        except Exception as e:
+            # Log the error for debugging
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.error(f"Error getting balance for user {obj.id}: {str(e)}")
+            return {
+                'amount': '0.00',
+                'updated_at': None
+            }
 
 
 class TokenResponseSerializer(serializers.Serializer):
@@ -213,34 +259,61 @@ class SMSResponseSerializer(serializers.Serializer):
 class UserDetailsSerializer(serializers.ModelSerializer):
     """Сериализатор для детальной информации о пользователе (только чтение)"""
     roles = serializers.SerializerMethodField()
+    balance = serializers.SerializerMethodField()
     avatar = serializers.ImageField(use_url=True, read_only=True)
     
     class Meta:
         model = CustomUser
         fields = [
-            'id', 'username', 'email', 'phone_number', 'first_name', 
+            'id', 'private_id', 'username', 'email', 'phone_number', 'first_name', 
             'last_name', 'date_of_birth', 'avatar', 'address', 
-            'longitude', 'latitude', 'is_verified', 'roles',
+            'longitude', 'latitude', 'is_verified', 'roles', 'balance',
             'created_at', 'updated_at', 'description'
         ]
         read_only_fields = [
-            'id', 'email', 'phone_number', 'is_verified', 'roles',
+            'id', 'private_id', 'email', 'phone_number', 'is_verified', 'roles', 'balance',
             'created_at', 'updated_at'
         ]
     
     def get_roles(self, obj):
-        """Получение всех ролей пользователя"""
+        """Получение всех ролей пользователя с полной информацией"""
         # Check if obj is a model instance (not a dictionary)
         if hasattr(obj, 'groups'):
             try:
                 groups = obj.groups.all()
                 if groups.exists():
-                    return [group.name for group in groups]
+                    return [
+                        {
+                            'id': group.id,
+                            'name': group.name
+                        }
+                        for group in groups
+                    ]
             except Exception as e:
                 # Log the error for debugging
                 import logging
                 logger = logging.getLogger(__name__)
                 logger.error(f"Error getting roles for user {obj.id}: {str(e)}")
+        return []
+    
+    def get_balance(self, obj):
+        """Получение баланса пользователя"""
+        try:
+            from .models import UserBalance
+            balance = UserBalance.get_or_create_balance(obj)
+            return {
+                'amount': str(balance.amount),
+                'updated_at': balance.updated_at
+            }
+        except Exception as e:
+            # Log the error for debugging
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.error(f"Error getting balance for user {obj.id}: {str(e)}")
+            return {
+                'amount': '0.00',
+                'updated_at': None
+            }
         return []
 
 
@@ -252,12 +325,11 @@ class UserUpdateSerializer(serializers.ModelSerializer):
         allow_null=True,
         help_text="Загрузите файл изображения для аватара"
     )
-    roles = serializers.ListField(
-        child=serializers.ChoiceField(choices=['Driver', 'Master']),
+    roles = serializers.CharField(
         required=False,
-        allow_empty=True,
+        allow_blank=True,
         write_only=True,
-        help_text="Список ролей пользователя (можно выбрать несколько): Driver, Master. Пример: ['Driver', 'Master']"
+        help_text="Роли пользователя. Можно указать одну роль или несколько через запятую. Примеры: 'Driver', 'Driver,Owner', 'Driver,Master,Owner'"
     )
     
     class Meta:
@@ -277,6 +349,27 @@ class UserUpdateSerializer(serializers.ModelSerializer):
             'description': {'required': False},
         }
     
+    def validate_roles(self, value):
+        """Валидация и преобразование ролей из строки в список"""
+        if not value:
+            return []
+        
+        # Если это строка, разбиваем по запятой
+        if isinstance(value, str):
+            roles_list = [role.strip() for role in value.split(',') if role.strip()]
+        elif isinstance(value, list):
+            roles_list = value
+        else:
+            raise serializers.ValidationError("Роли должны быть строкой или списком")
+        
+        # Валидация каждой роли
+        valid_roles = ['Driver', 'Master', 'Owner']
+        for role in roles_list:
+            if role not in valid_roles:
+                raise serializers.ValidationError(f"Неверная роль: {role}. Допустимые роли: {', '.join(valid_roles)}")
+        
+        return roles_list
+    
     def update(self, instance, validated_data):
         """Обновление пользователя с поддержкой изменения нескольких ролей (групп)"""
         from django.contrib.auth.models import Group
@@ -292,12 +385,16 @@ class UserUpdateSerializer(serializers.ModelSerializer):
         
         # Обновление групп пользователя
         if roles is not None:  # Проверяем, что roles передан (даже если пустой список)
-            # Удаление из всех текущих групп
-            instance.groups.clear()
-            # Добавление в новые группы
-            for role_name in roles:
-                group, created = Group.objects.get_or_create(name=role_name)
-                instance.groups.add(group)
+            # Если roles пустой список, просто очищаем группы
+            if not roles:
+                instance.groups.clear()
+            else:
+                # Удаление из всех текущих групп
+                instance.groups.clear()
+                # Добавление в новые группы
+                for role_name in roles:
+                    group, created = Group.objects.get_or_create(name=role_name)
+                    instance.groups.add(group)
         
         return instance
 

@@ -10,7 +10,7 @@ class OrderAdmin(admin.ModelAdmin):
     """Админка для заказов"""
     
     list_display = [
-        'id', 'user_link', 'status_badge', 'priority_badge', 
+        'user_link', 'status_badge', 'priority_badge', 
         'master_link', 'location_short', 'created_at', 'updated_at'
     ]
     list_filter = [
@@ -22,6 +22,7 @@ class OrderAdmin(admin.ModelAdmin):
         'user__email', 'master__user__first_name', 'master__user__last_name'
     ]
     readonly_fields = ['id', 'created_at', 'updated_at', 'user_link', 'master_link']
+    filter_horizontal = ['masters', 'car', 'category']
     list_per_page = 25
     list_max_show_all = 100
     
@@ -33,11 +34,7 @@ class OrderAdmin(admin.ModelAdmin):
             'fields': ('location', 'latitude', 'longitude')
         }),
         ('Мастер', {
-            'fields': ('master_link',)
-        }),
-        ('Дополнительные данные', {
-            'fields': ('data',),
-            'classes': ('collapse',)
+            'fields': ('master_link', 'masters')
         }),
         ('Временные метки', {
             'fields': ('created_at', 'updated_at'),

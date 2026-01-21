@@ -40,7 +40,7 @@ LOCAL_APPS = [
 THIRD_PARTY_APPS = [
     'rest_framework',
     'rest_framework_simplejwt',
-    'drf_yasg',
+    'drf_spectacular',
     'corsheaders',
     'django_filters',
     *LOCAL_APPS,
@@ -188,6 +188,7 @@ REST_FRAMEWORK = {
     ],
     "PAGE_SIZE": 100,
     'DEFAULT_PAGINATION_CLASS': 'rest_framework.pagination.LimitOffsetPagination',
+    'DEFAULT_SCHEMA_CLASS': 'drf_spectacular.openapi.AutoSchema',
 }
 
 SIMPLE_JWT = {
@@ -245,52 +246,43 @@ SMS_FALLBACK_SERVICE = 'smsc'  # Резервный SMS сервис
 # SMS_RU_PASSWORD = 'your-sms-ru-password'
 # SMS_RU_API_URL = 'https://sms.ru/sms/send'
 
-# Swagger JWT Configuration
-SWAGGER_SETTINGS = {
-    'SECURITY_DEFINITIONS': {
-        # JWT Bearer auth header (used by security=[{'Bearer': []}] in views)
-        'Bearer': {
-            'type': 'apiKey',
-            'name': 'Authorization',
-            'in': 'header',
-            'description': 'JWT Authorization header using the Bearer scheme. Example: "Bearer <token>"'
-        },
-        # OAuth2 password flow used by the custom swagger token endpoint
-        'OAuth2': {
-            'type': 'oauth2',
-            'authorizationUrl': '',
-            'tokenUrl': '/api/auth/oauth/token/',
-            'flow': 'password',
-            'scopes': {
-                'read': 'Read access',
-                'write': 'Write access'
-            }
-        }
+# DRF Spectacular Configuration
+SPECTACULAR_SETTINGS = {
+    'TITLE': 'Check Avto APIs',
+    'DESCRIPTION': 'Check Avto Apies - JWT Authentication Required',
+    'VERSION': 'v1',
+    'SERVE_INCLUDE_SCHEMA': False,
+    'COMPONENT_SPLIT_REQUEST': True,
+    'SCHEMA_PATH_PREFIX': '/api/',
+    'SWAGGER_UI_SETTINGS': {
+        'deepLinking': True,
+        'persistAuthorization': True,
+        'displayOperationId': True,
     },
-    'USE_SESSION_AUTH': False,
-    'JSON_EDITOR': True,
-    'SUPPORTED_SUBMIT_METHODS': [
-        'get',
-        'post',
-        'put',
-        'delete',
-        'patch'
+    'SWAGGER_UI_FAVICON_HREF': '/static/favicon.ico',
+    'REDOC_UI_SETTINGS': {
+        'hideDownloadButton': True,
+        'hideHostname': True,
+    },
+    'SERVERS': [
+        {'url': 'http://localhost:8000', 'description': 'Development server'},
     ],
-    'OPERATIONS_SORTER': 'alpha',
-    'TAGS_SORTER': 'alpha',
-    'DOC_EXPANSION': 'none',
-    'DEEP_LINKING': True,
-    'SHOW_EXTENSIONS': True,
-    'SHOW_COMMON_EXTENSIONS': True,
-    'OAUTH2_REDIRECT_URL': 'http://localhost:8000/swagger/',
-    'OAUTH2_CONFIG': {
-        'clientId': 'swagger',
-        'clientSecret': 'swagger-secret',
-        'realm': 'swagger',
-        'appName': 'Check Avto API',
-        'scopeSeparator': ' ',
-        'additionalQueryStringParams': {},
-        'useBasicAuthenticationWithAccessCodeGrant': False,
-        'usePkceWithAuthorizationCodeGrant': False
-    }
+    'TAGS': [
+        {'name': 'Authentication', 'description': 'User authentication and authorization'},
+        {'name': 'Cars', 'description': 'Car management endpoints'},
+        {'name': 'Masters', 'description': 'Master/service provider endpoints'},
+        {'name': 'Orders', 'description': 'Order management endpoints'},
+        {'name': 'Categories', 'description': 'Category management endpoints'},
+    ],
+    'PREPROCESSING_HOOKS': [],
+    'POSTPROCESSING_HOOKS': [],
+    'GENERIC_ADDITIONAL_PROPERTIES': None,
+    'CAMPAIGN': None,
+    'CONTACT': {
+        'name': 'API Support',
+        'email': 'contact@snippets.local',
+    },
+    'LICENSE': {
+        'name': 'BSD License',
+    },
 }

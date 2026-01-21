@@ -3,12 +3,13 @@ from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
+from rest_framework.pagination import PageNumberPagination
 from django_filters.rest_framework import DjangoFilterBackend
 from django.db.models import Q
 from django.contrib.auth import get_user_model
 
-from drf_yasg.utils import swagger_auto_schema
-from drf_yasg import openapi
+from drf_spectacular.utils import extend_schema, OpenApiParameter
+from drf_spectacular.types import OpenApiTypes
 
 from .models import Order, OrderStatus, Rating
 from .serializers import OrderSerializer, OrderCreateSerializer, OrderUpdateSerializer, RatingSerializer
@@ -18,6 +19,13 @@ from apps.master.serializers import MasterSerializer
 from apps.accounts.models import UserBalance
 
 User = get_user_model()
+
+
+class OrderPagination(PageNumberPagination):
+    """Пагинация для заказов"""
+    page_size = 10
+    page_size_query_param = 'page_size'
+    max_page_size = 100
 
 
 class OrderListCreateView(APIView):
@@ -40,51 +48,20 @@ class OrderListCreateView(APIView):
         # Если обычный пользователь, показываем только его заказы
         return Order.objects.filter(user=user)
 
-    @swagger_auto_schema(
-        operation_summary="Получить список заказов",
-        operation_description="Возвращает список заказов с возможностью фильтрации, поиска и сортировки",
-        tags=['Order'],
-        manual_parameters=[
-            openapi.Parameter(
-                'status',
-                openapi.IN_QUERY,
-                description="Фильтр по статусу заказа",
-                type=openapi.TYPE_STRING,
-                enum=[choice[0] for choice in OrderStatus.choices]
-            ),
-            openapi.Parameter(
-                'priority',
-                openapi.IN_QUERY,
-                description="Фильтр по приоритету заказа",
-                type=openapi.TYPE_STRING,
-                enum=['low', 'high']
-            ),
-            openapi.Parameter(
-                'master',
-                openapi.IN_QUERY,
-                description="Фильтр по мастеру (ID мастера)",
-                type=openapi.TYPE_INTEGER
-            ),
-            openapi.Parameter(
-                'search',
-                openapi.IN_QUERY,
-                description="Поиск по тексту заказа, местоположению или имени пользователя",
-                type=openapi.TYPE_STRING
-            ),
-            openapi.Parameter(
-                'ordering',
-                openapi.IN_QUERY,
-                description="Сортировка по полю (created_at, updated_at, status, priority)",
-                type=openapi.TYPE_STRING,
-                enum=['created_at', '-created_at', 'updated_at', '-updated_at', 'status', '-status', 'priority', '-priority']
-            ),
+    @extend_schema(
+        summary="Получить список заказов",
+        description="Возвращает список заказов с возможностью фильтрации, поиска и сортировки",
+        tags=['Orders'],
+        parameters=[
+            {'name': 'status', 'in': 'query', 'description': 'Фильтр по статусу заказа', 'type': 'string', 'enum': [choice[0] for choice in OrderStatus.choices]},
+            {'name': 'priority', 'in': 'query', 'description': 'Фильтр по приоритету заказа', 'type': 'string', 'enum': ['low', 'high']},
+            {'name': 'master', 'in': 'query', 'description': 'Фильтр по мастеру (ID мастера)', 'type': 'integer'},
+            {'name': 'search', 'in': 'query', 'description': 'Поиск по тексту заказа, местоположению или имени пользователя', 'type': 'string'},
+            {'name': 'ordering', 'in': 'query', 'description': 'Сортировка по полю (created_at, updated_at, status, priority)', 'type': 'string', 'enum': ['created_at', '-created_at', 'updated_at', '-updated_at', 'status', '-status', 'priority', '-priority']},
         ],
         responses={
-            200: openapi.Response(
-                description="Список заказов",
-                schema=OrderSerializer
-            ),
-            401: openapi.Response(description="Не авторизован"),
+            200: OrderSerializer(many=True),
+            401: {'type': 'object', 'properties': {'detail': {'type': 'string'}}},
         }
     )
     def get(self, request):
@@ -97,96 +74,62 @@ class OrderListCreateView(APIView):
         serializer = OrderSerializer(queryset, many=True)
         return Response(serializer.data)
 
-    @swagger_auto_schema(
-        operation_summary="Создать новый заказ",
-        operation_description="Создает новый заказ для текущего пользователя (user берется из header). "
-                              "Поля: text (обязательно) - описание заказа, location (обязательно) - адрес или описание места, "
-                              "priority - приоритет заказа (low - низкий, high - высокий, по умолчанию low), "
-                              "latitude - широта местоположения (от -90 до 90), "
-                              "longitude - долгота местоположения (от -180 до 180), "
-                              "master_id - ID мастера (опционально), "
-                              "car_list - массив ID машин (опционально, например [1, 2]), "
-                              "category_list - массив ID категорий (опционально, например [1, 2]), "
-                              "master_in_master_list - массив ID мастеров внутри мастера (опционально, например [1, 2]).",
-        tags=['Order'],
-        request_body=openapi.Schema(
-            type=openapi.TYPE_OBJECT,
-            required=['text', 'location'],
-            properties={
-                'text': openapi.Schema(
-                    type=openapi.TYPE_STRING,
-                    description='Описание заказа',
-                    example='Нужна помощь с заменой колеса'
-                ),
-                'priority': openapi.Schema(
-                    type=openapi.TYPE_STRING,
-                    enum=['low', 'high'],
-                    description='Приоритет заказа',
-                    default='low',
-                    example='high'
-                ),
-                'location': openapi.Schema(
-                    type=openapi.TYPE_STRING,
-                    description='Адрес или описание места',
-                    example='ул. Навои, д. 15, Ташкент'
-                ),
-                'latitude': openapi.Schema(
-                    type=openapi.TYPE_NUMBER,
-                    format=openapi.FORMAT_DOUBLE,
-                    description='Широта местоположения (от -90 до 90)',
-                    example=41.3111
-                ),
-                'longitude': openapi.Schema(
-                    type=openapi.TYPE_NUMBER,
-                    format=openapi.FORMAT_DOUBLE,
-                    description='Долгота местоположения (от -180 до 180)',
-                    example=69.2797
-                ),
-                'master_id': openapi.Schema(
-                    type=openapi.TYPE_INTEGER,
-                    description='ID мастера (необязательно)',
-                    example=1
-                ),
-                'car_list': openapi.Schema(
-                    type=openapi.TYPE_ARRAY,
-                    items=openapi.Schema(type=openapi.TYPE_INTEGER),
-                    description='Список ID машин. Необязательно. Пример: [1, 2, 3]',
-                    example=[1, 2]
-                ),
-                'category_list': openapi.Schema(
-                    type=openapi.TYPE_ARRAY,
-                    items=openapi.Schema(type=openapi.TYPE_INTEGER),
-                    description='Список ID категорий. Необязательно. Пример: [1, 2, 3]',
-                    example=[1, 2]
-                ),
-                'master_in_master_list': openapi.Schema(
-                    type=openapi.TYPE_ARRAY,
-                    items=openapi.Schema(type=openapi.TYPE_INTEGER),
-                    description='Список ID пользователей (MasterInMaster group). Необязательно. Пример: [1, 2, 3]',
-                    example=[1, 2]
-                )
+    @extend_schema(
+        summary="Создать новый заказ",
+        description="""
+Создает новый заказ для текущего пользователя (user берется из header).
+
+**Поддерживает два сценария:**
+
+1️⃣ **SOS заказ** (экстренная ситуация):
+   - Не указывается master_id
+   - Заказ отправляется всем доступным мастерам в радиусе
+
+2️⃣ **Обычный заказ** (выбор конкретного мастера):
+   - Указывается master_id
+   - Заказ отправляется конкретному мастеру
+
+**Обязательные поля для обоих сценариев:**
+- text (string) - описание проблемы
+- priority (string) - приоритет заказа: 'low' (низкий) или 'high' (высокий)
+- location (string) - адрес или описание места
+- latitude (number) - широта местоположения (от -90 до 90)
+- longitude (number) - долгота местоположения (от -180 до 180)
+- car_list (array) - список ID машин [1, 2, 3]
+- category_list (array) - список ID категорий проблем [1, 2, 3]
+
+**Необязательные поля:**
+- master_id (integer) - ID мастера (для обычного заказа)
+- masters_list (array) - список ID пользователей-мастеров для рейтинга [4, 5]
+        """,
+        tags=['Orders'],
+        request={
+            'application/json': {
+                'type': 'object',
+                'required': ['text', 'priority', 'location', 'latitude', 'longitude', 'car_list', 'category_list'],
+                'properties': {
+                    'text': {'type': 'string', 'description': 'Описание проблемы (обязательно)', 'example': 'Нужна помощь с заменой колеса'},
+                    'priority': {'type': 'string', 'enum': ['low', 'high'], 'description': 'Приоритет заказа (обязательно)', 'example': 'high'},
+                    'location': {'type': 'string', 'description': 'Адрес или описание места (обязательно)', 'example': 'ул. Навои, д. 15, Ташкент'},
+                    'latitude': {'type': 'number', 'description': 'Широта местоположения (обязательно, от -90 до 90)', 'example': 41.3111},
+                    'longitude': {'type': 'number', 'description': 'Долгота местоположения (обязательно, от -180 до 180)', 'example': 69.2797},
+                    'car_list': {'type': 'array', 'items': {'type': 'integer'}, 'description': 'Список ID машин (обязательно). Пример: [1, 2]', 'example': [2]},
+                    'category_list': {'type': 'array', 'items': {'type': 'integer'}, 'description': 'Список ID категорий проблем (обязательно). Пример: [1, 2]', 'example': [1]},
+                    'master_id': {'type': 'integer', 'description': 'ID мастера (необязательно, для обычного заказа)', 'example': 5},
+                    'masters_list': {'type': 'array', 'items': {'type': 'integer'}, 'description': 'Список ID пользователей-мастеров (необязательно, для рейтинга). Пример: [4, 5]', 'example': [4, 5]}
+                }
             }
-        ),
+        },
         responses={
-            201: openapi.Response(
-                description="Заказ успешно создан",
-                schema=openapi.Schema(
-                    type=openapi.TYPE_OBJECT,
-                    properties={
-                        'message': openapi.Schema(
-                            type=openapi.TYPE_STRING,
-                            description='Сообщение об успешном создании заказа',
-                            example='Ваш заказ отправлен'
-                        ),
-                        'order': openapi.Schema(
-                            type=openapi.TYPE_OBJECT,
-                            description='Данные созданного заказа'
-                        )
-                    }
-                )
-            ),
-            400: openapi.Response(description="Ошибка валидации данных"),
-            401: openapi.Response(description="Не авторизован"),
+            201: {
+                'type': 'object',
+                'properties': {
+                    'message': {'type': 'string', 'description': 'Сообщение об успешном создании заказа', 'example': 'Ваш заказ отправлен'},
+                    'order': {'type': 'object', 'description': 'Данные созданного заказа'}
+                }
+            },
+            400: {'type': 'object', 'properties': {'detail': {'type': 'string'}}},
+            401: {'type': 'object', 'properties': {'detail': {'type': 'string'}}},
         }
     )
     def post(self, request):
@@ -251,27 +194,18 @@ class OrderDetailView(APIView):
         except Order.DoesNotExist:
             return None
 
-    @swagger_auto_schema(
-        operation_summary="Получить детали заказа",
-        operation_description="Возвращает детальную информацию о конкретном заказе",
-        tags=['Order'],
-        manual_parameters=[
-            openapi.Parameter(
-                'id',
-                openapi.IN_PATH,
-                description="ID заказа",
-                type=openapi.TYPE_INTEGER,
-                required=True
-            ),
+    @extend_schema(
+        summary="Получить детали заказа",
+        description="Возвращает детальную информацию о конкретном заказе",
+        tags=['Orders'],
+        parameters=[
+            {'name': 'id', 'in': 'path', 'description': 'ID заказа', 'type': 'integer', 'required': True},
         ],
         responses={
-            200: openapi.Response(
-                description="Детали заказа",
-                schema=OrderSerializer
-            ),
-            404: openapi.Response(description="Заказ не найден"),
-            401: openapi.Response(description="Не авторизован"),
-            403: openapi.Response(description="Нет прав доступа"),
+            200: OrderSerializer,
+            404: {'type': 'object', 'properties': {'error': {'type': 'string'}}},
+            401: {'type': 'object', 'properties': {'detail': {'type': 'string'}}},
+            403: {'type': 'object', 'properties': {'detail': {'type': 'string'}}},
         }
     )
     def get(self, request, id):
@@ -286,78 +220,39 @@ class OrderDetailView(APIView):
         serializer = OrderSerializer(order)
         return Response(serializer.data)
 
-    @swagger_auto_schema(
-        operation_summary="Полное обновление заказа",
-        operation_description="Полностью обновляет все поля заказа. "
-                              "Поля: text - описание заказа, location - адрес или описание места, "
-                              "priority - приоритет заказа (low - низкий, high - высокий), "
-                              "status - статус заказа (pending - ожидает, in_progress - в работе, completed - завершен, cancelled - отменен, rejected - отклонен), "
-                              "latitude - широта местоположения (от -90 до 90), "
-                              "longitude - долгота местоположения (от -180 до 180), "
-                              "master - ID мастера.",
-        tags=['Order'],
-        manual_parameters=[
-            openapi.Parameter(
-                'id',
-                openapi.IN_PATH,
-                description="ID заказа",
-                type=openapi.TYPE_INTEGER,
-                required=True
-            ),
+    @extend_schema(
+        summary="Полное обновление заказа",
+        description="Полностью обновляет все поля заказа. "
+                  "Поля: text - описание заказа, location - адрес или описание места, "
+                  "priority - приоритет заказа (low - низкий, high - высокий), "
+                  "status - статус заказа (pending - ожидает, in_progress - в работе, completed - завершен, cancelled - отменен, rejected - отклонен), "
+                  "latitude - широта местоположения (от -90 до 90), "
+                  "longitude - долгота местоположения (от -180 до 180), "
+                  "master - ID мастера.",
+        tags=['Orders'],
+        parameters=[
+            {'name': 'id', 'in': 'path', 'description': 'ID заказа', 'type': 'integer', 'required': True},
         ],
-        request_body=openapi.Schema(
-            type=openapi.TYPE_OBJECT,
-            properties={
-                'text': openapi.Schema(
-                    type=openapi.TYPE_STRING,
-                    description='Описание заказа',
-                    example='Нужна помощь с заменой колеса'
-                ),
-                'status': openapi.Schema(
-                    type=openapi.TYPE_STRING,
-                    enum=['pending', 'in_progress', 'completed', 'cancelled', 'rejected'],
-                    description='Статус заказа',
-                    example='in_progress'
-                ),
-                'priority': openapi.Schema(
-                    type=openapi.TYPE_STRING,
-                    enum=['low', 'high'],
-                    description='Приоритет заказа',
-                    example='high'
-                ),
-                'location': openapi.Schema(
-                    type=openapi.TYPE_STRING,
-                    description='Адрес или описание места',
-                    example='ул. Навои, д. 15, Ташкент'
-                ),
-                'latitude': openapi.Schema(
-                    type=openapi.TYPE_NUMBER,
-                    format=openapi.FORMAT_DOUBLE,
-                    description='Широта местоположения (от -90 до 90)',
-                    example=41.3111
-                ),
-                'longitude': openapi.Schema(
-                    type=openapi.TYPE_NUMBER,
-                    format=openapi.FORMAT_DOUBLE,
-                    description='Долгота местоположения (от -180 до 180)',
-                    example=69.2797
-                ),
-                'master': openapi.Schema(
-                    type=openapi.TYPE_INTEGER,
-                    description='ID мастера',
-                    example=1
-                )
+        request={
+            'application/json': {
+                'type': 'object',
+                'properties': {
+                    'text': {'type': 'string', 'description': 'Описание заказа', 'example': 'Нужна помощь с заменой колеса'},
+                    'status': {'type': 'string', 'enum': ['pending', 'in_progress', 'completed', 'cancelled', 'rejected'], 'description': 'Статус заказа', 'example': 'in_progress'},
+                    'priority': {'type': 'string', 'enum': ['low', 'high'], 'description': 'Приоритет заказа', 'example': 'high'},
+                    'location': {'type': 'string', 'description': 'Адрес или описание места', 'example': 'ул. Навои, д. 15, Ташкент'},
+                    'latitude': {'type': 'number', 'description': 'Широта местоположения (от -90 до 90)', 'example': 41.3111},
+                    'longitude': {'type': 'number', 'description': 'Долгота местоположения (от -180 до 180)', 'example': 69.2797},
+                    'master': {'type': 'integer', 'description': 'ID мастера', 'example': 1}
+                }
             }
-        ),
+        },
         responses={
-            200: openapi.Response(
-                description="Заказ успешно обновлен",
-                schema=OrderSerializer
-            ),
-            400: openapi.Response(description="Ошибка валидации данных"),
-            404: openapi.Response(description="Заказ не найден"),
-            401: openapi.Response(description="Не авторизован"),
-            403: openapi.Response(description="Нет прав доступа"),
+            200: OrderSerializer,
+            400: {'type': 'object', 'properties': {'detail': {'type': 'string'}}},
+            404: {'type': 'object', 'properties': {'error': {'type': 'string'}}},
+            401: {'type': 'object', 'properties': {'detail': {'type': 'string'}}},
+            403: {'type': 'object', 'properties': {'detail': {'type': 'string'}}},
         }
     )
     def put(self, request, id):
@@ -375,78 +270,39 @@ class OrderDetailView(APIView):
             return Response(serializer.data)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
-    @swagger_auto_schema(
-        operation_summary="Частичное обновление заказа",
-        operation_description="Частично обновляет поля заказа. Можно указать только те поля, которые нужно обновить. "
-                              "Поля: text - описание заказа, location - адрес или описание места, "
-                              "priority - приоритет заказа (low - низкий, high - высокий), "
-                              "status - статус заказа (pending - ожидает, in_progress - в работе, completed - завершен, cancelled - отменен, rejected - отклонен), "
-                              "latitude - широта местоположения (от -90 до 90), "
-                              "longitude - долгота местоположения (от -180 до 180), "
-                              "master - ID мастера.",
-        tags=['Order'],
-        manual_parameters=[
-            openapi.Parameter(
-                'id',
-                openapi.IN_PATH,
-                description="ID заказа",
-                type=openapi.TYPE_INTEGER,
-                required=True
-            ),
+    @extend_schema(
+        summary="Частичное обновление заказа",
+        description="Частично обновляет поля заказа. Можно указать только те поля, которые нужно обновить. "
+                  "Поля: text - описание заказа, location - адрес или описание места, "
+                  "priority - приоритет заказа (low - низкий, high - высокий), "
+                  "status - статус заказа (pending - ожидает, in_progress - в работе, completed - завершен, cancelled - отменен, rejected - отклонен), "
+                  "latitude - широта местоположения (от -90 до 90), "
+                  "longitude - долгота местоположения (от -180 до 180), "
+                  "master - ID мастера.",
+        tags=['Orders'],
+        parameters=[
+            {'name': 'id', 'in': 'path', 'description': 'ID заказа', 'type': 'integer', 'required': True},
         ],
-        request_body=openapi.Schema(
-            type=openapi.TYPE_OBJECT,
-            properties={
-                'text': openapi.Schema(
-                    type=openapi.TYPE_STRING,
-                    description='Описание заказа',
-                    example='Нужна помощь с заменой колеса'
-                ),
-                'status': openapi.Schema(
-                    type=openapi.TYPE_STRING,
-                    enum=['pending', 'in_progress', 'completed', 'cancelled', 'rejected'],
-                    description='Статус заказа',
-                    example='in_progress'
-                ),
-                'priority': openapi.Schema(
-                    type=openapi.TYPE_STRING,
-                    enum=['low', 'high'],
-                    description='Приоритет заказа',
-                    example='high'
-                ),
-                'location': openapi.Schema(
-                    type=openapi.TYPE_STRING,
-                    description='Адрес или описание места',
-                    example='ул. Навои, д. 15, Ташкент'
-                ),
-                'latitude': openapi.Schema(
-                    type=openapi.TYPE_NUMBER,
-                    format=openapi.FORMAT_DOUBLE,
-                    description='Широта местоположения (от -90 до 90)',
-                    example=41.3111
-                ),
-                'longitude': openapi.Schema(
-                    type=openapi.TYPE_NUMBER,
-                    format=openapi.FORMAT_DOUBLE,
-                    description='Долгота местоположения (от -180 до 180)',
-                    example=69.2797
-                ),
-                'master': openapi.Schema(
-                    type=openapi.TYPE_INTEGER,
-                    description='ID мастера',
-                    example=1
-                )
+        request={
+            'application/json': {
+                'type': 'object',
+                'properties': {
+                    'text': {'type': 'string', 'description': 'Описание заказа', 'example': 'Нужна помощь с заменой колеса'},
+                    'status': {'type': 'string', 'enum': ['pending', 'in_progress', 'completed', 'cancelled', 'rejected'], 'description': 'Статус заказа', 'example': 'in_progress'},
+                    'priority': {'type': 'string', 'enum': ['low', 'high'], 'description': 'Приоритет заказа', 'example': 'high'},
+                    'location': {'type': 'string', 'description': 'Адрес или описание места', 'example': 'ул. Навои, д. 15, Ташкент'},
+                    'latitude': {'type': 'number', 'description': 'Широта местоположения (от -90 до 90)', 'example': 41.3111},
+                    'longitude': {'type': 'number', 'description': 'Долгота местоположения (от -180 до 180)', 'example': 69.2797},
+                    'master': {'type': 'integer', 'description': 'ID мастера', 'example': 1}
+                }
             }
-        ),
+        },
         responses={
-            200: openapi.Response(
-                description="Заказ успешно обновлен",
-                schema=OrderSerializer
-            ),
-            400: openapi.Response(description="Ошибка валидации данных"),
-            404: openapi.Response(description="Заказ не найден"),
-            401: openapi.Response(description="Не авторизован"),
-            403: openapi.Response(description="Нет прав доступа"),
+            200: OrderSerializer,
+            400: {'type': 'object', 'properties': {'detail': {'type': 'string'}}},
+            404: {'type': 'object', 'properties': {'error': {'type': 'string'}}},
+            401: {'type': 'object', 'properties': {'detail': {'type': 'string'}}},
+            403: {'type': 'object', 'properties': {'detail': {'type': 'string'}}},
         }
     )
     def patch(self, request, id):
@@ -464,24 +320,18 @@ class OrderDetailView(APIView):
             return Response(serializer.data)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
-    @swagger_auto_schema(
-        operation_summary="Удалить заказ",
-        operation_description="Удаляет заказ из системы",
-        tags=['Order'],
-        manual_parameters=[
-            openapi.Parameter(
-                'id',
-                openapi.IN_PATH,
-                description="ID заказа",
-                type=openapi.TYPE_INTEGER,
-                required=True
-            ),
+    @extend_schema(
+        summary="Удалить заказ",
+        description="Удаляет заказ из системы",
+        tags=['Orders'],
+        parameters=[
+            {'name': 'id', 'in': 'path', 'description': 'ID заказа', 'type': 'integer', 'required': True},
         ],
         responses={
-            204: openapi.Response(description="Заказ успешно удален"),
-            404: openapi.Response(description="Заказ не найден"),
-            401: openapi.Response(description="Не авторизован"),
-            403: openapi.Response(description="Нет прав доступа"),
+            204: {'description': 'Заказ успешно удален'},
+            404: {'type': 'object', 'properties': {'error': {'type': 'string'}}},
+            401: {'type': 'object', 'properties': {'detail': {'type': 'string'}}},
+            403: {'type': 'object', 'properties': {'detail': {'type': 'string'}}},
         }
     )
     def delete(self, request, id):
@@ -497,307 +347,463 @@ class OrderDetailView(APIView):
         return Response(status=status.HTTP_204_NO_CONTENT)
 
 
-@swagger_auto_schema(
-    method='get',
-    operation_summary="Получить заказы текущего пользователя",
-    operation_description="Возвращает все заказы текущего авторизованного пользователя (user берется из header). "
-                          "Фильтрует заказы по полю user в модели Order.",
-    tags=['Order'],
-    manual_parameters=[
-        openapi.Parameter(
-            'name',
-            openapi.IN_QUERY,
-            description="Опциональный фильтр по имени мастера",
-            type=openapi.TYPE_STRING,
-            required=False
-        ),
-    ],
-    responses={
-        200: openapi.Response(
-            description="Список заказов пользователя",
-            schema=OrderSerializer
-        ),
-        401: openapi.Response(description="Не авторизован"),
-    }
-)
-@api_view(['GET'])
-@permission_classes([IsAuthenticated])
-def orders_by_user(request):
-    """Получить заказы текущего пользователя с опциональным фильтром по имени мастера"""
-    orders = Order.objects.filter(user=request.user)
-    # name: фильтр по имени мастера (optional)
-    name = request.query_params.get('name')
-    if name:
-        orders = orders.filter(
-            Q(master__user__first_name__icontains=name) |
-            Q(master__user__last_name__icontains=name) |
-            Q(master__user__get_full_name__icontains=name)
-        )
-    serializer = OrderSerializer(orders, many=True)
-    return Response(serializer.data)
+class OrdersByUserView(APIView):
+    """
+    API для получения заказов текущего пользователя
+    """
+    permission_classes = [IsAuthenticated]
+    pagination_class = OrderPagination
+    
+    @extend_schema(
+        summary="Получить заказы текущего пользователя",
+        description="Возвращает все заказы текущего авторизованного пользователя (user берется из header). "
+                  "Фильтрует заказы по полю user в модели Order. "
+                  "Поддерживает пагинацию (по умолчанию 10 заказов на страницу).",
+        tags=['Orders'],
+        parameters=[
+            {'name': 'name', 'in': 'query', 'description': 'Опциональный фильтр по имени мастера', 'type': 'string', 'required': False},
+            {'name': 'page', 'in': 'query', 'description': 'Номер страницы', 'type': 'integer', 'required': False},
+            {'name': 'page_size', 'in': 'query', 'description': 'Количество заказов на странице (макс. 100)', 'type': 'integer', 'required': False},
+        ],
+        responses={
+            200: OrderSerializer(many=True),
+            401: {'type': 'object', 'properties': {'detail': {'type': 'string'}}},
+        }
+    )
+    def get(self, request):
+        """Получить заказы текущего пользователя с опциональным фильтром по имени мастера"""
+        orders = Order.objects.filter(user=request.user).order_by('-created_at')
+        # name: фильтр по имени мастера (optional)
+        name = request.query_params.get('name')
+        if name:
+            orders = orders.filter(
+                Q(master__user__first_name__icontains=name) |
+                Q(master__user__last_name__icontains=name) |
+                Q(master__user__get_full_name__icontains=name)
+            )
+        
+        # Применяем пагинацию
+        paginator = self.pagination_class()
+        page = paginator.paginate_queryset(orders, request)
+        if page is not None:
+            serializer = OrderSerializer(page, many=True, context={'request': request})
+            return paginator.get_paginated_response(serializer.data)
+        
+        serializer = OrderSerializer(orders, many=True, context={'request': request})
+        return Response(serializer.data)
 
 
-@swagger_auto_schema(
-    method='get',
-    operation_summary="Получить заказы текущего мастера",
-    operation_description="Возвращает список заказов, назначенных текущему мастеру (master берется из header). "
-                          "Фильтрует заказы по полю master в модели Order. "
-                          "Поддерживает фильтрацию по статусу, приоритету и географической области (4 точки)",
-    tags=['Order'],
-    manual_parameters=[
-        openapi.Parameter(
-            'status',
-            openapi.IN_QUERY,
-            description="Фильтр по статусу заказа",
-            type=openapi.TYPE_STRING,
-            enum=[choice[0] for choice in OrderStatus.choices]
-        ),
-        openapi.Parameter(
-            'priority',
-            openapi.IN_QUERY,
-            description="Фильтр по приоритету заказа",
-            type=openapi.TYPE_STRING,
-            enum=['low', 'high']
-        ),
-        # Координаты полигона (4 точки) для фильтрации по локации заказов
-        openapi.Parameter('point1_lat', openapi.IN_QUERY, description='Широта точки 1', type=openapi.TYPE_NUMBER),
-        openapi.Parameter('point1_lon', openapi.IN_QUERY, description='Долгота точки 1', type=openapi.TYPE_NUMBER),
-        openapi.Parameter('point2_lat', openapi.IN_QUERY, description='Широта точки 2', type=openapi.TYPE_NUMBER),
-        openapi.Parameter('point2_lon', openapi.IN_QUERY, description='Долгота точки 2', type=openapi.TYPE_NUMBER),
-        openapi.Parameter('point3_lat', openapi.IN_QUERY, description='Широта точки 3', type=openapi.TYPE_NUMBER),
-        openapi.Parameter('point3_lon', openapi.IN_QUERY, description='Долгота точки 3', type=openapi.TYPE_NUMBER),
-        openapi.Parameter('point4_lat', openapi.IN_QUERY, description='Широта точки 4', type=openapi.TYPE_NUMBER),
-        openapi.Parameter('point4_lon', openapi.IN_QUERY, description='Долгота точки 4', type=openapi.TYPE_NUMBER),
-    ],
-    responses={
-        200: openapi.Response(
-            description="Список заказов мастера в области",
-            schema=OrderSerializer
-        ),
-        401: openapi.Response(description="Не авторизован"),
-        403: openapi.Response(description="Пользователь не является мастером"),
-    }
-)
-@api_view(['GET'])
-@permission_classes([IsAuthenticated])
-def orders_by_master(request):
-    """Получить заказы текущего мастера в области"""
-    # Проверяем, что пользователь является мастером
-    try:
-        master = request.user.master_profiles.first()
-        if not master:
+class OrdersByMasterView(APIView):
+    """
+    API для получения заказов текущего мастера
+    """
+    permission_classes = [IsAuthenticated]
+    pagination_class = OrderPagination
+    
+    @extend_schema(
+        summary="Получить заказы текущего мастера",
+        description="""
+## Описание
+Возвращает список заказов, назначенных текущему мастеру (master берется из header/token).
+
+## Фильтры (все необязательные)
+
+### 1. Статус заказа (status)
+- Значения: pending, in_progress, completed, cancelled, rejected
+- Пример: `status=in_progress`
+
+### 2. Приоритет (priority)
+- Значения: low (низкий), high (высокий)
+- Пример: `priority=high`
+
+### 3. Тип проблемы (category)
+- ID категории типа **by_order**
+- Использует **smart filter** через service_type
+- Пример: `category=1` (где 1 - это "Пробито колесо", service_type="Шиномонтаж")
+- Найдёт все заказы с похожим service_type или именем категории
+
+### 4. Район (location)
+- Поиск по адресу заказа
+- Пример: `location=Ташкент` или `location=Навои`
+- Поиск нечувствителен к регистру
+
+### 5. Тип ТС (car_category)
+- ID категории машины типа **by_car**
+- Прямой фильтр по ID
+- Пример: `car_category=3` (где 3 - это "Легковой")
+
+### 6. Географическая область (4 точки)
+- Фильтр по координатам (полигон)
+- Требуется указать все 4 точки
+- Пример: `point1_lat=41.3&point1_lon=69.2&point2_lat=...`
+
+### 7. Новые заказы (is_new)
+- Фильтр для отображения новых заказов
+- Значение: `true` или `false`
+- Показывает заказы где master=null И masters пустой
+- Пример: `is_new=true`
+
+### 8. В работе (is_work)
+- Фильтр для заказов в работе
+- Значение: `true` или `false`
+- Показывает заказы текущего мастера со статусом IN_PROGRESS
+- Пример: `is_work=true`
+
+### 9. Архив (is_archive)
+- Фильтр для завершенных заказов
+- Значение: `true` или `false`
+- Показывает заказы текущего мастера со статусом COMPLETED
+- Пример: `is_archive=true`
+
+## Pagination
+- По умолчанию 10 заказов на страницу
+- Можно изменить через `page_size` (макс. 100)
+
+## Примеры запросов
+
+**Базовый:**
+```
+GET /api/order/by-master/
+```
+
+**Новые заказы:**
+```
+GET /api/order/by-master/?is_new=true
+```
+
+**Заказы в работе:**
+```
+GET /api/order/by-master/?is_work=true
+```
+
+**Завершенные заказы (архив):**
+```
+GET /api/order/by-master/?is_archive=true
+```
+
+**С фильтром по статусу:**
+```
+GET /api/order/by-master/?status=in_progress
+```
+
+**С фильтром по проблеме (smart filter):**
+```
+GET /api/order/by-master/?category=1
+```
+
+**С несколькими фильтрами:**
+```
+GET /api/order/by-master/?status=pending&priority=high&category=1&location=Ташкент
+```
+        """,
+        tags=['Orders'],
+        parameters=[
+            OpenApiParameter(name='status', type=OpenApiTypes.STR, location=OpenApiParameter.QUERY, description='Фильтр по статусу заказа', required=False, enum=[choice[0] for choice in OrderStatus.choices]),
+            OpenApiParameter(name='priority', type=OpenApiTypes.STR, location=OpenApiParameter.QUERY, description='Фильтр по приоритету (low, high)', required=False, enum=['low', 'high']),
+            OpenApiParameter(name='category', type=OpenApiTypes.INT, location=OpenApiParameter.QUERY, description='Фильтр по типу проблемы. ID категории типа by_order. Использует smart filter через service_type.', required=False),
+            OpenApiParameter(name='location', type=OpenApiTypes.STR, location=OpenApiParameter.QUERY, description='Фильтр по району (поиск по адресу заказа)', required=False),
+            OpenApiParameter(name='car_category', type=OpenApiTypes.INT, location=OpenApiParameter.QUERY, description='Фильтр по типу ТС (ID категории машины типа by_car)', required=False),
+            # Координаты полигона (4 точки)
+            OpenApiParameter(name='point1_lat', type=OpenApiTypes.FLOAT, location=OpenApiParameter.QUERY, description='Широта точки 1 (для географического фильтра)', required=False),
+            OpenApiParameter(name='point1_lon', type=OpenApiTypes.FLOAT, location=OpenApiParameter.QUERY, description='Долгота точки 1', required=False),
+            OpenApiParameter(name='point2_lat', type=OpenApiTypes.FLOAT, location=OpenApiParameter.QUERY, description='Широта точки 2', required=False),
+            OpenApiParameter(name='point2_lon', type=OpenApiTypes.FLOAT, location=OpenApiParameter.QUERY, description='Долгота точки 2', required=False),
+            OpenApiParameter(name='point3_lat', type=OpenApiTypes.FLOAT, location=OpenApiParameter.QUERY, description='Широта точки 3', required=False),
+            OpenApiParameter(name='point3_lon', type=OpenApiTypes.FLOAT, location=OpenApiParameter.QUERY, description='Долгота точки 3', required=False),
+            OpenApiParameter(name='point4_lat', type=OpenApiTypes.FLOAT, location=OpenApiParameter.QUERY, description='Широта точки 4', required=False),
+            OpenApiParameter(name='point4_lon', type=OpenApiTypes.FLOAT, location=OpenApiParameter.QUERY, description='Долгота точки 4', required=False),
+            OpenApiParameter(name='is_new', type=OpenApiTypes.BOOL, location=OpenApiParameter.QUERY, description='Новые заказы (master=null и masters пустой)', required=False),
+            OpenApiParameter(name='is_work', type=OpenApiTypes.BOOL, location=OpenApiParameter.QUERY, description='Заказы в работе (status=IN_PROGRESS)', required=False),
+            OpenApiParameter(name='is_archive', type=OpenApiTypes.BOOL, location=OpenApiParameter.QUERY, description='Завершенные заказы (status=COMPLETED)', required=False),
+            OpenApiParameter(name='page', type=OpenApiTypes.INT, location=OpenApiParameter.QUERY, description='Номер страницы для пагинации', required=False),
+            OpenApiParameter(name='page_size', type=OpenApiTypes.INT, location=OpenApiParameter.QUERY, description='Количество заказов на странице (макс. 100)', required=False),
+        ],
+        responses={
+            200: OrderSerializer(many=True),
+            401: {'type': 'object', 'properties': {'detail': {'type': 'string'}}},
+            403: {'type': 'object', 'properties': {'error': {'type': 'string'}}},
+        }
+    )
+    def get(self, request):
+        """Получить заказы текущего мастера в области"""
+        # Проверяем, что пользователь является мастером
+        try:
+            master = request.user.master_profiles.first()
+            if not master:
+                return Response(
+                    {'error': 'Пользователь не является мастером'}, 
+                    status=status.HTTP_403_FORBIDDEN
+                )
+        except AttributeError:
             return Response(
                 {'error': 'Пользователь не является мастером'}, 
                 status=status.HTTP_403_FORBIDDEN
             )
-    except AttributeError:
-        return Response(
-            {'error': 'Пользователь не является мастером'}, 
-            status=status.HTTP_403_FORBIDDEN
-        )
-    
-    # Получаем заказы для текущего мастера через foreign key
-    orders = Order.objects.filter(master=master)
-    
-    # Фильтр по статусу
-    status_filter = request.query_params.get('status')
-    if status_filter:
-        orders = orders.filter(status=status_filter)
-    
-    # Фильтр по приоритету
-    priority_filter = request.query_params.get('priority')
-    if priority_filter:
-        orders = orders.filter(priority=priority_filter)
-    
-    # Фильтр по локации: 4 точки полигона (bounding box)
-    area_filter = _get_area_filter_for_orders(request)
-    if area_filter:
-        # Faqat koordinatalari bo'lgan orderlarni filter qilamiz
-        orders = orders.filter(
-            latitude__isnull=False,
-            longitude__isnull=False,
-            **area_filter
-        )
-    
-    serializer = OrderSerializer(orders, many=True)
-    return Response(serializer.data)
-
-
-
-
-# by-name endpoint removed; name filtering added into by-user and by-master
-
-
-@swagger_auto_schema(
-    method='post',
-    operation_summary="Обновить статус заказа",
-    operation_description="Обновляет статус заказа на новый. "
-                          "Статусы: pending - ожидает, in_progress - в работе, completed - завершен, cancelled - отменен, rejected - отклонен. "
-                          "Доступно только владельцу заказа или мастеру.",
-    tags=['Order'],
-    manual_parameters=[
-        openapi.Parameter(
-            'order_id',
-            openapi.IN_PATH,
-            description="ID заказа",
-            type=openapi.TYPE_INTEGER,
-            required=True
-        ),
-    ],
-    request_body=openapi.Schema(
-        type=openapi.TYPE_OBJECT,
-        required=['status'],
-        properties={
-            'status': openapi.Schema(
-                type=openapi.TYPE_STRING,
-                enum=['pending', 'in_progress', 'completed', 'cancelled', 'rejected'],
-                description='Статус заказа: pending (Ожидает), in_progress (В работе), completed (Завершен), cancelled (Отменен), rejected (Отклонен)',
-                example='in_progress'
-            )
-        }
-    ),
-    responses={
-        200: openapi.Response(
-            description="Статус заказа успешно обновлен",
-            schema=OrderSerializer
-        ),
-        400: openapi.Response(description="Статус обязателен или недопустимый статус"),
-        404: openapi.Response(description="Заказ не найден"),
-        401: openapi.Response(description="Не авторизован"),
-        403: openapi.Response(description="Нет прав для изменения этого заказа"),
-    }
-)
-@api_view(['POST'])
-@permission_classes([IsAuthenticated, IsOrderOwnerOrMaster])
-def update_order_status(request, order_id):
-    """Обновить статус заказа"""
-    try:
-        order = Order.objects.get(id=order_id)
-        new_status = request.data.get('status')
         
-        if not new_status:
-            return Response(
-                {'error': 'Статус обязателен'}, 
-                status=status.HTTP_400_BAD_REQUEST
+        # Получаем заказы для текущего мастера через foreign key
+        orders = Order.objects.filter(master=master)
+        
+        # Фильтр is_new - новые заказы (master=null и masters пустой)
+        is_new = request.query_params.get('is_new', '').lower() == 'true'
+        if is_new:
+            from django.db.models import Count
+            # Показываем заказы без мастера
+            orders = Order.objects.annotate(
+                masters_count=Count('masters')
+            ).filter(
+                master__isnull=True,
+                masters_count=0
             )
         
-        if new_status not in [choice[0] for choice in OrderStatus.choices]:
-            return Response(
-                {'error': 'Недопустимый статус'}, 
-                status=status.HTTP_400_BAD_REQUEST
+        # Фильтр is_work - заказы в работе (IN_PROGRESS)
+        is_work = request.query_params.get('is_work', '').lower() == 'true'
+        if is_work:
+            orders = Order.objects.filter(master=master, status=OrderStatus.IN_PROGRESS)
+        
+        # Фильтр is_archive - завершенные заказы (COMPLETED)
+        is_archive = request.query_params.get('is_archive', '').lower() == 'true'
+        if is_archive:
+            orders = Order.objects.filter(master=master, status=OrderStatus.COMPLETED)
+        
+        # Фильтр по статусу
+        status_filter = request.query_params.get('status')
+        if status_filter:
+            orders = orders.filter(status=status_filter)
+        
+        # Фильтр по приоритету
+        priority_filter = request.query_params.get('priority')
+        if priority_filter:
+            orders = orders.filter(priority=priority_filter)
+        
+        # Smart фильтр по категории проблемы (Тип проблемы)
+        category_filter = request.query_params.get('category')
+        if category_filter:
+            try:
+                from apps.categories.models import Category
+                category_id = int(category_filter)
+                category = Category.objects.get(id=category_id)
+                
+                # Если это by_order категория - используем smart filter через service_type
+                if category.type_category == 'by_order':
+                    category_conditions = Q()
+                    
+                    if category.service_type:
+                        # Ищем заказы с похожим service_type
+                        category_conditions |= Q(category__service_type__icontains=category.service_type)
+                    
+                    if category.name:
+                        # Также ищем по имени категории
+                        category_conditions |= Q(category__name__icontains=category.name)
+                    
+                    if category_conditions:
+                        orders = orders.filter(category_conditions)
+                else:
+                    # Для других типов - прямой фильтр по ID
+                    orders = orders.filter(category__id=category_id)
+                    
+            except Category.DoesNotExist:
+                pass
+            except (ValueError, TypeError):
+                pass
+        
+        # Фильтр по району/местоположению (Районы)
+        location_filter = request.query_params.get('location')
+        if location_filter:
+            orders = orders.filter(location__icontains=location_filter)
+        
+        # Фильтр по типу ТС (категория машины)
+        car_category_filter = request.query_params.get('car_category')
+        if car_category_filter:
+            try:
+                car_category_id = int(car_category_filter)
+                orders = orders.filter(car__category__id=car_category_id)
+            except (ValueError, TypeError):
+                pass
+        
+        # Фильтр по локации: 4 точки полигона (bounding box)
+        area_filter = _get_area_filter_for_orders(request)
+        if area_filter:
+            # Faqat koordinatalari bo'lgan orderlarni filter qilamiz
+            orders = orders.filter(
+                latitude__isnull=False,
+                longitude__isnull=False,
+                **area_filter
             )
         
-        order.status = new_status
-        order.save()
+        # Убираем дубликаты и сортируем
+        orders = orders.distinct().order_by('-created_at')
         
-        serializer = OrderSerializer(order)
+        # Применяем пагинацию
+        paginator = self.pagination_class()
+        page = paginator.paginate_queryset(orders, request)
+        if page is not None:
+            serializer = OrderSerializer(page, many=True, context={'request': request})
+            return paginator.get_paginated_response(serializer.data)
+        
+        serializer = OrderSerializer(orders, many=True, context={'request': request})
         return Response(serializer.data)
+
+
+class UpdateOrderStatusView(APIView):
+    """
+    API для обновления статуса заказа
+    """
+    permission_classes = [IsAuthenticated, IsOrderOwnerOrMaster]
     
-    except Order.DoesNotExist:
-        return Response(
-            {'error': 'Заказ не найден'}, 
-            status=status.HTTP_404_NOT_FOUND
-        )
-
-
-@swagger_auto_schema(
-    method='post',
-    operation_summary="Принять заказ в работу",
-    operation_description="Принимает заказ в работу с проверкой минимального баланса пользователя (1000 ₽) и списанием 200 ₽ за каждый заказ",
-    tags=['Order'],
-    manual_parameters=[
-        openapi.Parameter(
-            'order_id',
-            openapi.IN_PATH,
-            description="ID заказа",
-            type=openapi.TYPE_INTEGER,
-            required=True
-        ),
-    ],
-    responses={
-        200: openapi.Response(
-            description="Заказ успешно принят в работу",
-            schema=openapi.Schema(
-                type=openapi.TYPE_OBJECT,
-                properties={
-                    'message': openapi.Schema(type=openapi.TYPE_STRING),
-                    'order': openapi.Schema(type=openapi.TYPE_OBJECT),
-                    'balance_after': openapi.Schema(type=openapi.TYPE_NUMBER)
+    @extend_schema(
+        summary="Обновить статус заказа",
+        description="Обновляет статус заказа на новый. "
+                  "Статусы: pending - ожидает, in_progress - в работе, completed - завершен, cancelled - отменен, rejected - отклонен. "
+                  "Доступно только владельцу заказа или мастеру.",
+        tags=['Orders'],
+        parameters=[
+            {'name': 'order_id', 'in': 'path', 'description': 'ID заказа', 'type': 'integer', 'required': True},
+        ],
+        request={
+            'application/json': {
+                'type': 'object',
+                'required': ['status'],
+                'properties': {
+                    'status': {
+                        'type': 'string',
+                        'enum': ['pending', 'in_progress', 'completed', 'cancelled', 'rejected'],
+                        'description': 'Статус заказа: pending (Ожидает), in_progress (В работе), completed (Завершен), cancelled (Отменен), rejected (Отклонен)',
+                        'example': 'in_progress'
+                    }
                 }
-            )
-        ),
-        400: openapi.Response(description="Недостаточно средств на балансе или заказ уже принят"),
-        404: openapi.Response(description="Заказ не найден"),
-        401: openapi.Response(description="Не авторизован"),
-        403: openapi.Response(description="Только мастера могут принимать заказы"),
-    }
-)
-@api_view(['POST'])
-@permission_classes([IsAuthenticated, IsMaster])
-def accept_order(request, order_id):
-    """Принять заказ в работу"""
-    try:
-        order = Order.objects.get(id=order_id)
-        
-        # Проверяем, что заказ не назначен другому мастеру
-        master = request.user.master_profiles.first()
-        if order.master and order.master.id != master.id:
-            return Response(
-                {'error': 'Заказ уже назначен другому мастеру'}, 
-                status=status.HTTP_400_BAD_REQUEST
-            )
-        
-        # Проверяем, что заказ не истек
-        if order.is_expired():
-            order.mark_as_cancelled_if_expired()
-            return Response(
-                {'error': 'Заказ истек и был отменен'}, 
-                status=status.HTTP_400_BAD_REQUEST
-            )
-        
-        # Проверяем баланс пользователя (владельца заказа)
-        user_balance = UserBalance.get_or_create_balance(order.user)
-        print(f"DEBUG: user_balance = {user_balance}")
-        if not user_balance.has_minimum_balance(1000):
-            return Response(
-                {'error': 'На балансе должно быть минимум 1000 ₽, чтобы брать заказы в работу'}, 
-                status=status.HTTP_400_BAD_REQUEST
-            )
-        
-        # Проверяем, может ли пользователь позволить себе заказ (200 ₽)
-        if not user_balance.can_afford_order(200):
-            return Response(
-                {'error': 'Недостаточно средств для принятия заказа. Требуется 200 ₽'}, 
-                status=status.HTTP_400_BAD_REQUEST
-            )
-        
-        # Списываем 200 ₽ с баланса
-        if user_balance.deduct_amount(200):
-            # Назначаем заказ текущему мастеру и меняем статус
-            order.master = master
-            order.status = OrderStatus.IN_PROGRESS
+            }
+        },
+        responses={
+            200: OrderSerializer,
+            400: {'type': 'object', 'properties': {'detail': {'type': 'string'}}},
+            404: {'type': 'object', 'properties': {'error': {'type': 'string'}}},
+            401: {'type': 'object', 'properties': {'detail': {'type': 'string'}}},
+            403: {'type': 'object', 'properties': {'detail': {'type': 'string'}}},
+        }
+    )
+    def post(self, request, order_id):
+        """Обновить статус заказа"""
+        try:
+            order = Order.objects.get(id=order_id)
+            new_status = request.data.get('status')
+            
+            if not new_status:
+                return Response(
+                    {'error': 'Статус обязателен'}, 
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            if new_status not in [choice[0] for choice in OrderStatus.choices]:
+                return Response(
+                    {'error': 'Недопустимый статус'}, 
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            order.status = new_status
             order.save()
             
-            # Обновляем баланс после списания
-            user_balance.refresh_from_db()
-            
             serializer = OrderSerializer(order)
-            return Response({
-                'message': 'Заказ взят в работу. 200 ₽ были списаны с баланса.',
-                'order': serializer.data,
-                'balance_after': float(user_balance.amount)
-            })
-        else:
+            return Response(serializer.data)
+        
+        except Order.DoesNotExist:
             return Response(
-                {'error': 'Ошибка при списании средств с баланса'}, 
-                status=status.HTTP_400_BAD_REQUEST
+                {'error': 'Заказ не найден'}, 
+                status=status.HTTP_404_NOT_FOUND
             )
+
+
+class AcceptOrderView(APIView):
+    """
+    API для принятия заказа в работу
+    """
+    permission_classes = [IsAuthenticated, IsMaster]
     
-    except Order.DoesNotExist:
-        return Response(
-            {'error': 'Заказ не найден'}, 
-            status=status.HTTP_404_NOT_FOUND
-        )
+    @extend_schema(
+        summary="Принять заказ в работу",
+        description="Принимает заказ в работу с проверкой минимального баланса пользователя (1000 ₽) и списанием 200 ₽ за каждый заказ",
+        tags=['Orders'],
+        parameters=[
+            {'name': 'order_id', 'in': 'path', 'description': 'ID заказа', 'type': 'integer', 'required': True},
+        ],
+        responses={
+            200: {
+                'type': 'object',
+                'properties': {
+                    'message': {'type': 'string'},
+                    'order': {'type': 'object'},
+                    'balance_after': {'type': 'number'}
+                }
+            },
+            400: {'type': 'object', 'properties': {'detail': {'type': 'string'}}},
+            404: {'type': 'object', 'properties': {'error': {'type': 'string'}}},
+            401: {'type': 'object', 'properties': {'detail': {'type': 'string'}}},
+            403: {'type': 'object', 'properties': {'detail': {'type': 'string'}}},
+        }
+    )
+    def post(self, request, order_id):
+        """Принять заказ в работу"""
+        try:
+            order = Order.objects.get(id=order_id)
+            
+            # Проверяем, что заказ не назначен другому мастеру
+            master = request.user.master_profiles.first()
+            if order.master and order.master.id != master.id:
+                return Response(
+                    {'error': 'Заказ уже назначен другому мастеру'}, 
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            # Проверяем, что заказ не истек
+            if order.is_expired():
+                order.mark_as_cancelled_if_expired()
+                return Response(
+                    {'error': 'Заказ истек и был отменен'}, 
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            # Проверяем баланс пользователя (владельца заказа)
+            user_balance = UserBalance.get_or_create_balance(order.user)
+            print(f"DEBUG: user_balance = {user_balance}")
+            if not user_balance.has_minimum_balance(1000):
+                return Response(
+                    {'error': 'На балансе должно быть минимум 1000 ₽, чтобы брать заказы в работу'}, 
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            # Проверяем, может ли пользователь позволить себе заказ (200 ₽)
+            if not user_balance.can_afford_order(200):
+                return Response(
+                    {'error': 'Недостаточно средств для принятия заказа. Требуется 200 ₽'}, 
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            # Списываем 200 ₽ с баланса
+            if user_balance.deduct_amount(200):
+                # Назначаем заказ текущему мастеру и меняем статус
+                order.master = master
+                order.status = OrderStatus.IN_PROGRESS
+                order.save()
+                
+                # Обновляем баланс после списания
+                user_balance.refresh_from_db()
+                
+                serializer = OrderSerializer(order)
+                return Response({
+                    'message': 'Заказ взят в работу. 200 ₽ были списаны с баланса.',
+                    'order': serializer.data,
+                    'balance_after': float(user_balance.amount)
+                })
+            else:
+                return Response(
+                    {'error': 'Ошибка при списании средств с баланса'}, 
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+        
+        except Order.DoesNotExist:
+            return Response(
+                {'error': 'Заказ не найден'}, 
+                status=status.HTTP_404_NOT_FOUND
+            )
 
 
 def _get_area_filter_for_orders(request):
@@ -862,26 +868,27 @@ class RatingCreateView(APIView):
     """
     permission_classes = [IsAuthenticated]
     
-    @swagger_auto_schema(
-        operation_summary="Создать рейтинг",
-        operation_description="Создает рейтинг для мастера или мастера в мастере после завершения заказа",
+    @extend_schema(
+        summary="Создать рейтинг",
+        description="Создает рейтинг для мастера или мастера в мастере после завершения заказа",
         tags=['Rating'],
-        request_body=openapi.Schema(
-            type=openapi.TYPE_OBJECT,
-            properties={
-                'order': openapi.Schema(type=openapi.TYPE_INTEGER, description='ID заказа'),
-                'master': openapi.Schema(type=openapi.TYPE_INTEGER, description='ID мастера (если рейтинг для мастера)'),
-                'master_in_master': openapi.Schema(type=openapi.TYPE_INTEGER, description='ID мастера в мастере (если рейтинг для мастера в мастере)'),
-                'rating': openapi.Schema(type=openapi.TYPE_INTEGER, description='Рейтинг от 1 до 5'),
-                'comment': openapi.Schema(type=openapi.TYPE_STRING, description='Комментарий')
-            },
-            required=['order', 'rating']
-        ),
+        request={
+            'application/json': {
+                'type': 'object',
+                'properties': {
+                    'order': {'type': 'integer', 'description': 'ID заказа'},
+                    'master': {'type': 'integer', 'description': 'ID мастера'},
+                    'rating': {'type': 'integer', 'description': 'Рейтинг от 1 до 5'},
+                    'comment': {'type': 'string', 'description': 'Комментарий'}
+                },
+                'required': ['order', 'rating']
+            }
+        },
         responses={
-            201: openapi.Response(description="Рейтинг создан", schema=RatingSerializer),
-            400: openapi.Response(description="Ошибка валидации"),
-            404: openapi.Response(description="Заказ не найден"),
-            401: openapi.Response(description="Не авторизован")
+            201: RatingSerializer,
+            400: {'type': 'object', 'properties': {'detail': {'type': 'string'}}},
+            404: {'type': 'object', 'properties': {'error': {'type': 'string'}}},
+            401: {'type': 'object', 'properties': {'detail': {'type': 'string'}}}
         }
     )
     def post(self, request):
@@ -908,18 +915,11 @@ class RatingCreateView(APIView):
             
             # Проверяем, что рейтинг еще не был оставлен
             master = serializer.validated_data.get('master')
-            master_in_master = serializer.validated_data.get('master_in_master')
             
             if master:
                 if Rating.objects.filter(order=order, user=request.user, master=master).exists():
                     return Response(
                         {'error': 'Вы уже оставили рейтинг для этого мастера по этому заказу'},
-                        status=status.HTTP_400_BAD_REQUEST
-                    )
-            elif master_in_master:
-                if Rating.objects.filter(order=order, user=request.user, master_in_master=master_in_master).exists():
-                    return Response(
-                        {'error': 'Вы уже оставили рейтинг для этого мастера в мастере по этому заказу'},
                         status=status.HTTP_400_BAD_REQUEST
                     )
             
@@ -937,50 +937,462 @@ class RatingListView(APIView):
     """
     permission_classes = [IsAuthenticated]
     
-    @swagger_auto_schema(
-        operation_summary="Получить список рейтингов",
-        operation_description="Возвращает список рейтингов для мастера или мастера в мастере",
+    @extend_schema(
+        summary="Получить список рейтингов",
+        description="Возвращает список рейтингов для мастера",
         tags=['Rating'],
-        manual_parameters=[
-            openapi.Parameter(
-                'master',
-                openapi.IN_QUERY,
-                description="ID мастера",
-                type=openapi.TYPE_INTEGER,
-                required=False
-            ),
-            openapi.Parameter(
-                'master_in_master',
-                openapi.IN_QUERY,
-                description="ID мастера в мастере (user ID)",
-                type=openapi.TYPE_INTEGER,
-                required=False
-            )
+        parameters=[
+            {'name': 'master', 'in': 'query', 'description': 'ID мастера', 'type': 'integer', 'required': True}
         ],
         responses={
-            200: openapi.Response(
-                description="Список рейтингов", 
-                schema=RatingSerializer
-            ),
-            401: openapi.Response(description="Не авторизован")
+            200: RatingSerializer(many=True),
+            401: {'type': 'object', 'properties': {'detail': {'type': 'string'}}}
         }
     )
     def get(self, request):
         """Получение списка рейтингов"""
         master_id = request.query_params.get('master')
-        master_in_master_id = request.query_params.get('master_in_master')
         
-        ratings = Rating.objects.all()
-        
-        if master_id:
-            ratings = ratings.filter(master_id=master_id)
-        elif master_in_master_id:
-            ratings = ratings.filter(master_in_master_id=master_in_master_id)
-        else:
+        if not master_id:
             return Response(
-                {'error': 'Необходимо указать либо master, либо master_in_master'},
+                {'error': 'Необходимо указать master'},
                 status=status.HTTP_400_BAD_REQUEST
             )
         
+        ratings = Rating.objects.filter(master_id=master_id)
+        
         serializer = RatingSerializer(ratings, many=True, context={'request': request})
         return Response(serializer.data, status=status.HTTP_200_OK)
+
+
+class AvailableOrdersForMasterView(APIView):
+    """
+    API для получения доступных заказов для мастера
+    Показывает заказы без назначенного мастера в радиусе от мастера
+    """
+    permission_classes = [IsAuthenticated]
+    pagination_class = OrderPagination
+    
+    def calculate_distance(self, lat1, lon1, lat2, lon2):
+        """
+        Вычисление расстояния между двумя точками по формуле Haversine
+        Возвращает расстояние в километрах
+        """
+        from math import radians, sin, cos, sqrt, atan2
+        
+        # Радиус Земли в километрах
+        R = 6371.0
+        
+        # Конвертируем градусы в радианы
+        lat1_rad = radians(lat1)
+        lon1_rad = radians(lon1)
+        lat2_rad = radians(lat2)
+        lon2_rad = radians(lon2)
+        
+        # Разница координат
+        dlat = lat2_rad - lat1_rad
+        dlon = lon2_rad - lon1_rad
+        
+        # Формула Haversine
+        a = sin(dlat / 2)**2 + cos(lat1_rad) * cos(lat2_rad) * sin(dlon / 2)**2
+        c = 2 * atan2(sqrt(a), sqrt(1 - a))
+        
+        distance = R * c
+        return distance
+    
+    @extend_schema(
+        summary="Получить доступные заказы для мастера",
+        description="""
+## Описание
+Возвращает список доступных заказов (без назначенного мастера) в радиусе от местоположения мастера.
+
+## Обязательные параметры
+- **master_id** - ID мастера (координаты берутся из профиля мастера)
+
+## Необязательные параметры
+- **radius** - Радиус поиска в километрах (по умолчанию 10 км, можно увеличить до 50+ км)
+
+## Фильтры (все необязательные)
+
+### 1. Тип проблемы (category)
+- ID категории типа **by_order**
+- Использует **smart filter** через service_type
+- Пример: `category=1` (где 1 - это "Пробито колесо", service_type="Шиномонтаж")
+- Найдёт все заказы с похожим service_type или именем категории
+
+### 2. Район (location)
+- Поиск по адресу заказа
+- Пример: `location=Ташкент` или `location=Навои`
+- Поиск нечувствителен к регистру (case-insensitive)
+
+### 3. Тип ТС (car_category)
+- ID категории машины типа **by_car**
+- Прямой фильтр по ID
+- Пример: `car_category=3` (где 3 - это "Легковой")
+
+### 4. Приоритет (priority)
+- Уровень приоритета заказа
+- Значения: `low` (низкий) или `high` (высокий)
+- Пример: `priority=high`
+
+## Логика работы
+1. Берутся координаты мастера из его профиля (Master.latitude, Master.longitude)
+2. Фильтруются заказы где master=null И masters пустой список
+3. Применяются дополнительные фильтры (category, location, car_category, priority)
+4. Вычисляется расстояние от мастера до каждого заказа (Haversine formula)
+5. Фильтруются заказы в пределах указанного радиуса
+6. Сортировка по расстоянию (ближайшие сначала)
+
+## Pagination
+- По умолчанию 10 заказов на страницу
+- Можно изменить через `page_size` (макс. 100)
+- Навигация через `page` (номер страницы)
+
+## Примеры запросов
+
+**Базовый (только обязательные параметры):**
+```
+GET /api/order/available/?master_id=5
+```
+
+**С радиусом:**
+```
+GET /api/order/available/?master_id=5&radius=20
+```
+
+**С фильтром по проблеме:**
+```
+GET /api/order/available/?master_id=5&radius=15&category=1
+```
+
+**С несколькими фильтрами:**
+```
+GET /api/order/available/?master_id=5&radius=15&category=1&location=Ташкент&car_category=3&priority=high
+```
+
+**С пагинацией:**
+```
+GET /api/order/available/?master_id=5&radius=10&page=2&page_size=20
+```
+        """,
+        tags=['Orders'],
+        parameters=[
+            OpenApiParameter(
+                name='master_id',
+                type=OpenApiTypes.INT,
+                location=OpenApiParameter.QUERY,
+                description='ID мастера (обязательно). Координаты берутся из профиля мастера.',
+                required=True
+            ),
+            OpenApiParameter(
+                name='radius',
+                type=OpenApiTypes.FLOAT,
+                location=OpenApiParameter.QUERY,
+                description='Радиус поиска в километрах. По умолчанию 10 км. Можно указать от 1 до 100 км.',
+                required=False
+            ),
+            OpenApiParameter(
+                name='category',
+                type=OpenApiTypes.INT,
+                location=OpenApiParameter.QUERY,
+                description='Фильтр по типу проблемы. ID категории типа by_order. Использует smart filter через service_type (например: 1 для "Пробито колесо").',
+                required=False
+            ),
+            OpenApiParameter(
+                name='location',
+                type=OpenApiTypes.STR,
+                location=OpenApiParameter.QUERY,
+                description='Фильтр по району. Поиск по адресу заказа (например: "Ташкент", "Навои", "ул. Амира Темура").',
+                required=False
+            ),
+            OpenApiParameter(
+                name='car_category',
+                type=OpenApiTypes.INT,
+                location=OpenApiParameter.QUERY,
+                description='Фильтр по типу ТС. ID категории машины типа by_car (например: 3 для "Легковой").',
+                required=False
+            ),
+            OpenApiParameter(
+                name='priority',
+                type=OpenApiTypes.STR,
+                location=OpenApiParameter.QUERY,
+                description='Фильтр по приоритету. Допустимые значения: "low" (низкий) или "high" (высокий).',
+                required=False
+            ),
+            OpenApiParameter(
+                name='page',
+                type=OpenApiTypes.INT,
+                location=OpenApiParameter.QUERY,
+                description='Номер страницы для пагинации. Начинается с 1.',
+                required=False
+            ),
+            OpenApiParameter(
+                name='page_size',
+                type=OpenApiTypes.INT,
+                location=OpenApiParameter.QUERY,
+                description='Количество заказов на странице. По умолчанию 10, максимум 100.',
+                required=False
+            ),
+        ],
+        responses={
+            200: {
+                'description': 'Успешный ответ с пагинацией',
+                'content': {
+                    'application/json': {
+                        'example': {
+                            'count': 5,
+                            'next': 'http://localhost:8000/api/order/available/?master_id=5&page=2',
+                            'previous': None,
+                            'results': [
+                                {
+                                    'id': 10,
+                                    'user': {
+                                        'id': 4,
+                                        'private_id': '829137',
+                                        'full_name': 'Иван Иванов',
+                                        'phone_number': '998914495644',
+                                        'email': 'ivan@example.com',
+                                        'avatar': 'http://localhost:8000/media/avatars/avatar.jpg'
+                                    },
+                                    'car_data': [
+                                        {
+                                            'id': 2,
+                                            'brand': 'Toyota',
+                                            'model': 'Camry',
+                                            'year': 2020,
+                                            'category': {'id': 3, 'name': 'Легковой', 'type_category': 'by_car'}
+                                        }
+                                    ],
+                                    'category_data': [
+                                        {
+                                            'id': 1,
+                                            'name': 'Пробито колесо',
+                                            'type_category': 'by_order',
+                                            'service_type': 'Шиномонтаж'
+                                        }
+                                    ],
+                                    'text': 'Нужна помощь с заменой колеса',
+                                    'status': 'pending',
+                                    'priority': 'high',
+                                    'location': 'ул. Навои, д. 15, Ташкент',
+                                    'latitude': '41.3111000',
+                                    'longitude': '69.2797000',
+                                    'master': None,
+                                    'masters': [],
+                                    'distance': 2.35,
+                                    'created_at': '2026-01-21T12:00:00Z',
+                                    'updated_at': '2026-01-21T12:00:00Z'
+                                }
+                            ]
+                        }
+                    }
+                }
+            },
+            400: {
+                'description': 'Ошибка валидации параметров',
+                'content': {
+                    'application/json': {
+                        'examples': {
+                            'missing_master_id': {
+                                'summary': 'Не указан master_id',
+                                'value': {'error': 'Параметр master_id обязателен'}
+                            },
+                            'invalid_format': {
+                                'summary': 'Неверный формат параметров',
+                                'value': {'error': 'Неверный формат параметров'}
+                            },
+                            'no_coordinates': {
+                                'summary': 'У мастера нет координат',
+                                'value': {'error': 'У мастера не указаны координаты'}
+                            }
+                        }
+                    }
+                }
+            },
+            401: {
+                'description': 'Не авторизован',
+                'content': {
+                    'application/json': {
+                        'example': {'detail': 'Authentication credentials were not provided.'}
+                    }
+                }
+            },
+            404: {
+                'description': 'Мастер не найден',
+                'content': {
+                    'application/json': {
+                        'example': {'error': 'Мастер не найден'}
+                    }
+                }
+            },
+        }
+    )
+    def get(self, request):
+        """Получить доступные заказы для мастера"""
+        # Получаем параметры
+        master_id = request.query_params.get('master_id')
+        radius = request.query_params.get('radius', 10)  # По умолчанию 10 км
+        
+        # Валидация обязательных параметров
+        if not master_id:
+            return Response(
+                {'error': 'Параметр master_id обязателен'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        try:
+            master_id = int(master_id)
+            radius = float(radius)
+        except (ValueError, TypeError):
+            return Response(
+                {'error': 'Неверный формат параметров'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # Проверяем существование мастера
+        try:
+            master = Master.objects.get(id=master_id)
+        except Master.DoesNotExist:
+            return Response(
+                {'error': 'Мастер не найден'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+        
+        # Получаем координаты мастера
+        if not master.latitude or not master.longitude:
+            return Response(
+                {'error': 'У мастера не указаны координаты'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        master_lat = float(master.latitude)
+        master_long = float(master.longitude)
+        
+        print(f"\n{'='*60}")
+        print(f"ПОИСК ДОСТУПНЫХ ЗАКАЗОВ ДЛЯ МАСТЕРА ID: {master_id}")
+        print(f"Координаты мастера: lat={master_lat}, long={master_long}")
+        print(f"Радиус поиска: {radius} км")
+        print(f"{'='*60}")
+        
+        # Получаем заказы без назначенного мастера
+        # master=null И masters пустой (ManyToMany)
+        from django.db.models import Count
+        
+        orders = Order.objects.annotate(
+            masters_count=Count('masters')
+        ).filter(
+            master__isnull=True,
+            masters_count=0,
+            latitude__isnull=False,
+            longitude__isnull=False
+        )
+        
+        # Применяем дополнительные фильтры
+        category_filter = request.query_params.get('category')
+        location_filter = request.query_params.get('location')
+        car_category_filter = request.query_params.get('car_category')
+        priority_filter = request.query_params.get('priority')
+        
+        # Smart фильтр по категории проблемы (Тип проблемы)
+        if category_filter:
+            try:
+                from apps.categories.models import Category
+                category_id = int(category_filter)
+                category = Category.objects.get(id=category_id)
+                
+                print(f"Фильтр по категории: ID={category_filter}, Name={category.name}, Type={category.type_category}")
+                
+                # Если это by_order категория - используем smart filter через service_type
+                if category.type_category == 'by_order':
+                    category_conditions = Q()
+                    
+                    if category.service_type:
+                        # Ищем заказы с похожим service_type
+                        category_conditions |= Q(category__service_type__icontains=category.service_type)
+                        print(f"  Smart filter по service_type: {category.service_type}")
+                    
+                    if category.name:
+                        # Также ищем по имени категории
+                        category_conditions |= Q(category__name__icontains=category.name)
+                        print(f"  Smart filter по name: {category.name}")
+                    
+                    if category_conditions:
+                        orders = orders.filter(category_conditions)
+                else:
+                    # Для других типов - прямой фильтр по ID
+                    orders = orders.filter(category__id=category_id)
+                    print(f"  Прямой filter по ID")
+                    
+            except Category.DoesNotExist:
+                print(f"  ОШИБКА: Категория {category_filter} не найдена")
+            except (ValueError, TypeError):
+                print(f"  ОШИБКА: Неверный формат category ID")
+        
+        # Фильтр по району (location)
+        if location_filter:
+            orders = orders.filter(location__icontains=location_filter)
+            print(f"Фильтр по району: {location_filter}")
+        
+        # Smart фильтр по типу ТС (car_category)
+        if car_category_filter:
+            try:
+                from apps.categories.models import Category
+                car_cat_id = int(car_category_filter)
+                car_category = Category.objects.get(id=car_cat_id)
+                
+                print(f"Фильтр по типу ТС: ID={car_cat_id}, Name={car_category.name}, Type={car_category.type_category}")
+                
+                # Прямой фильтр по ID категории машины
+                orders = orders.filter(car__category__id=car_cat_id)
+                print(f"  Filter по car__category__id")
+                
+            except Category.DoesNotExist:
+                print(f"  ОШИБКА: Категория машины {car_category_filter} не найдена")
+            except (ValueError, TypeError):
+                print(f"  ОШИБКА: Неверный формат car_category ID")
+        
+        # Фильтр по приоритету
+        if priority_filter:
+            orders = orders.filter(priority=priority_filter)
+            print(f"Фильтр по приоритету: {priority_filter}")
+        
+        # Убираем дубликаты после фильтров
+        orders = orders.distinct()
+        
+        print(f"\nВсего найдено заказов без мастера (после фильтров): {orders.count()}")
+        
+        # Вычисляем расстояние и фильтруем по радиусу
+        filtered_orders = []
+        for order in orders:
+            distance = self.calculate_distance(
+                master_lat, master_long,
+                float(order.latitude), float(order.longitude)
+            )
+            
+            print(f"\nOrder ID: {order.id}")
+            print(f"  Координаты: lat={order.latitude}, long={order.longitude}")
+            print(f"  Расстояние от мастера: {distance:.2f} км")
+            print(f"  Радиус: {radius} км")
+            print(f"  Попадает в радиус: {'✅ ДА' if distance <= radius else '❌ НЕТ'}")
+            
+            if distance <= radius:
+                # Добавляем расстояние как атрибут
+                order.distance = round(distance, 2)
+                filtered_orders.append(order)
+        
+        print(f"\n{'='*60}")
+        print(f"ИТОГО заказов в радиусе {radius} км: {len(filtered_orders)}")
+        print(f"{'='*60}\n")
+        
+        # Сортируем по расстоянию (ближайшие сначала)
+        filtered_orders.sort(key=lambda x: x.distance)
+        
+        # Применяем пагинацию
+        paginator = self.pagination_class()
+        page = paginator.paginate_queryset(filtered_orders, request)
+        if page is not None:
+            serializer = OrderSerializer(page, many=True, context={'request': request})
+            return paginator.get_paginated_response(serializer.data)
+        
+        serializer = OrderSerializer(filtered_orders, many=True, context={'request': request})
+        return Response(serializer.data)

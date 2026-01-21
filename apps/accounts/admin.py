@@ -1,7 +1,7 @@
 from django.contrib import admin
 from django.contrib.auth.admin import UserAdmin
 from django.contrib.sites.models import Site
-from .models import CustomUser, UserBalance, UserSMSCode, FAQ
+from .models import CustomUser, MasterCustomUser, CarOwner, Owner, UserBalance, UserSMSCode, FAQ
 
 
 class UserBalanceInline(admin.StackedInline):
@@ -25,15 +25,93 @@ class UserSMSCodeInline(admin.TabularInline):
 @admin.register(CustomUser)
 class CustomUserAdmin(UserAdmin):
     """
-    Настройка админки для пользователей
+    Базовый админ для CustomUser (скрыт из меню, но доступен для ссылок)
+    """
+    
+    def has_module_permission(self, request):
+        """Скрываем из меню админки"""
+        return False
+    
+    list_display = ('private_id', 'email', 'username', 'first_name', 'last_name', 'created_at')
+    list_filter = ('groups', 'is_verified', 'is_staff', 'is_superuser', 'is_active', 'created_at')
+    search_fields = ('email', 'username', 'first_name', 'last_name', 'phone_number', 'private_id')
+    ordering = ('-created_at',)
+    inlines = [UserBalanceInline, UserSMSCodeInline]
+    
+    fieldsets = (
+        (None, {'fields': ('username', 'password')}),
+        ('Личная информация', {'fields': ('private_id', 'first_name', 'last_name', 'email', 'phone_number', 'date_of_birth', 'avatar', 'description')}),
+        ('Права доступа', {'fields': ('is_active', 'is_staff', 'is_superuser', 'groups')}),
+        ('Важные даты', {'fields': ('last_login', 'date_joined', 'created_at', 'updated_at')}),
+        ('Подтверждение', {'fields': ('is_verified',)}),
+    )
+    
+    add_fieldsets = (
+        (None, {
+            'classes': ('wide',),
+            'fields': ('username', 'email', 'first_name', 'last_name', 'password1', 'password2'),
+        }),
+    )
+    
+    readonly_fields = ('private_id', 'created_at', 'updated_at', 'date_joined', 'last_login')
+
+
+@admin.register(MasterCustomUser)
+class MasterCustomUserAdmin(UserAdmin):
+    """
+    Настройка админки для мастеров
     """
     
     def get_role_name(self, obj):
         return obj.get_role_name()
     get_role_name.short_description = 'Роль'
     
-    list_display = ('email', 'username', 'first_name', 'last_name', 'get_role_name', 'created_at')
-    list_filter = ('groups', 'is_verified', 'is_staff', 'is_superuser', 'is_active', 'created_at')
+    def get_queryset(self, request):
+        """Фильтруем только пользователей с группой Master"""
+        qs = super().get_queryset(request)
+        return qs.filter(groups__name='Master').distinct()
+    
+    list_display = ('private_id', 'email', 'username', 'first_name', 'last_name', 'get_role_name', 'created_at')
+    list_filter = ('is_verified', 'is_staff', 'is_active', 'created_at')
+    search_fields = ('email', 'username', 'first_name', 'last_name', 'phone_number')
+    ordering = ('-created_at',)
+    inlines = [UserBalanceInline, UserSMSCodeInline]
+    
+    fieldsets = (
+        (None, {'fields': ('username', 'password')}),
+        ('Личная информация', {'fields': ('private_id', 'first_name', 'last_name', 'email', 'phone_number', 'date_of_birth', 'avatar', 'description')}),
+        ('Права доступа', {'fields': ('is_active', 'is_staff', 'is_superuser', 'groups')}),
+        ('Важные даты', {'fields': ('last_login', 'date_joined', 'created_at', 'updated_at')}),
+        ('Подтверждение', {'fields': ('is_verified',)}),
+    )
+    
+    add_fieldsets = (
+        (None, {
+            'classes': ('wide',),
+            'fields': ('username', 'email', 'first_name', 'last_name', 'password1', 'password2'),
+        }),
+    )
+    
+    readonly_fields = ('created_at', 'updated_at', 'date_joined', 'last_login')
+
+
+@admin.register(CarOwner)
+class CarOwnerAdmin(UserAdmin):
+    """
+    Настройка админки для автовладельцев
+    """
+    
+    def get_role_name(self, obj):
+        return obj.get_role_name()
+    get_role_name.short_description = 'Роль'
+    
+    def get_queryset(self, request):
+        """Фильтруем только пользователей с группой Driver"""
+        qs = super().get_queryset(request)
+        return qs.filter(groups__name='Driver').distinct()
+    
+    list_display = ('private_id', 'email', 'username', 'first_name', 'last_name', 'get_role_name', 'created_at')
+    list_filter = ('is_verified', 'is_staff', 'is_active', 'created_at')
     search_fields = ('email', 'username', 'first_name', 'last_name', 'phone_number')
     ordering = ('-created_at',)
     inlines = [UserBalanceInline, UserSMSCodeInline]
@@ -41,6 +119,45 @@ class CustomUserAdmin(UserAdmin):
     fieldsets = (
         (None, {'fields': ('username', 'password')}),
         ('Личная информация', {'fields': ('first_name', 'last_name', 'email', 'phone_number', 'date_of_birth', 'avatar', 'description')}),
+        ('Права доступа', {'fields': ('is_active', 'is_staff', 'is_superuser', 'groups')}),
+        ('Важные даты', {'fields': ('last_login', 'date_joined', 'created_at', 'updated_at')}),
+        ('Подтверждение', {'fields': ('is_verified',)}),
+    )
+    
+    add_fieldsets = (
+        (None, {
+            'classes': ('wide',),
+            'fields': ('username', 'email', 'first_name', 'last_name', 'password1', 'password2'),
+        }),
+    )
+    
+    readonly_fields = ('created_at', 'updated_at', 'date_joined', 'last_login')
+
+
+@admin.register(Owner)
+class OwnerAdmin(UserAdmin):
+    """
+    Настройка админки для владельцев
+    """
+    
+    def get_role_name(self, obj):
+        return obj.get_role_name()
+    get_role_name.short_description = 'Роль'
+    
+    def get_queryset(self, request):
+        """Фильтруем только пользователей с группой Owner"""
+        qs = super().get_queryset(request)
+        return qs.filter(groups__name='Owner').distinct()
+    
+    list_display = ('private_id', 'email', 'username', 'first_name', 'last_name', 'get_role_name', 'created_at')
+    list_filter = ('is_verified', 'is_staff', 'is_active', 'created_at')
+    search_fields = ('email', 'username', 'first_name', 'last_name', 'phone_number')
+    ordering = ('-created_at',)
+    inlines = [UserBalanceInline, UserSMSCodeInline]
+    
+    fieldsets = (
+        (None, {'fields': ('username', 'password')}),
+        ('Личная информация', {'fields': ('private_id', 'first_name', 'last_name', 'email', 'phone_number', 'date_of_birth', 'avatar', 'description')}),
         ('Права доступа', {'fields': ('is_active', 'is_staff', 'is_superuser', 'groups')}),
         ('Важные даты', {'fields': ('last_login', 'date_joined', 'created_at', 'updated_at')}),
         ('Подтверждение', {'fields': ('is_verified',)}),

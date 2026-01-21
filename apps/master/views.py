@@ -1,16 +1,20 @@
 from rest_framework.views import APIView
 from rest_framework import status
 from rest_framework.response import Response
-from rest_framework.permissions import IsAuthenticated
-from drf_yasg.utils import swagger_auto_schema
-from drf_yasg import openapi
+from rest_framework.permissions import IsAuthenticated, AllowAny
+from drf_spectacular.utils import extend_schema, OpenApiExample, OpenApiParameter
+from drf_spectacular.types import OpenApiTypes
 from django.db.models import Q
-from .models import Master, MasterService, MasterServiceItems, MasterInMaster
+from .models import Master, MasterService, MasterServiceItems, MasterEmployee
 from .serializers import (
     MasterSerializer, MasterCreateSerializer, MasterUpdateSerializer, MasterNearbySerializer,
-    MasterServiceSerializer, MasterServiceItemsSerializer, MasterInMasterSerializer
+    MasterServiceSerializer, MasterServiceItemsSerializer, MasterEmployeeCreateSerializer
 )
-from .permissions import IsMasterGroup
+from .permissions import IsMasterGroup, IsOwnerGroup
+from django.contrib.auth import get_user_model
+from apps.accounts.services import SMSService
+
+User = get_user_model()
 
 
 class MasterProfileView(APIView):
@@ -18,177 +22,159 @@ class MasterProfileView(APIView):
     API для управления профилем мастера.
     
     Поддерживаемые операции:
-    - GET: получение профиля текущего пользователя
-    - POST: создание профиля или управление услугами
+    - GET: получение профилей мастерских где пользователь является владельцем ИЛИ сотрудником
+    - POST: создание профиля мастера (доступно ТОЛЬКО для Owner группы)
     """
-    permission_classes = [IsMasterGroup]
+    
+    def get_permissions(self):
+        """Разные права доступа для разных методов"""
+        if self.request.method == 'POST':
+            return [IsOwnerGroup()]
+        elif self.request.method == 'GET':
+            return [AllowAny()]
+        return [IsMasterGroup()]
     
     def get_object(self):
-        """Получение всех профилей мастера текущего пользователя"""
-        return Master.objects.filter(user=self.request.user)
+        """
+        Получение всех профилей мастера текущего пользователя
+        
+        Ищет мастерские где:
+        1. Пользователь является владельцем (Master.user)
+        2. ИЛИ пользователь является сотрудником (MasterEmployee.employee)
+        """
+        user = self.request.user
+        
+        # Сначала ищем мастерские где user - владелец
+        masters_as_owner = Master.objects.filter(user=user)
+        
+        # Затем ищем мастерские где user - сотрудник
+        employee_relations = MasterEmployee.objects.filter(employee=user).select_related('master')
+        masters_as_employee = Master.objects.filter(
+            id__in=[emp.master.id for emp in employee_relations]
+        )
+        
+        # Объединяем оба queryset'а (используем union или |)
+        # distinct() чтобы избежать дубликатов
+        all_masters = (masters_as_owner | masters_as_employee).distinct()
+        
+        return all_masters
     
-    @swagger_auto_schema(
-        operation_description="Получить профиль мастера",
-        security=[{'Bearer': []}],
+    @extend_schema(
+        summary="Получить профиль мастера",
+        description="""
+        Получить профили мастерских текущего пользователя. Доступно для всех пользователей (публичный доступ).
+        
+        **Логика поиска:**
+        - Если пользователь авторизован, возвращаются все мастерские где он является:
+          1. Владельцем (создал мастерскую)
+          2. ИЛИ сотрудником (добавлен через MasterEmployee)
+        - Если пользователь не авторизован, возвращается пустой список
+        """,
         responses={
-            200: openapi.Response(
-                description="Профиль мастера или пустой массив если профиль не найден",
-                schema=openapi.Schema(
-                    type=openapi.TYPE_ARRAY,
-                    items=openapi.Schema(
-                        type=openapi.TYPE_OBJECT,
-                        properties={
-                            'id': openapi.Schema(type=openapi.TYPE_INTEGER),
-                            'user_info': openapi.Schema(
-                                type=openapi.TYPE_OBJECT,
-                                properties={
-                                    'id': openapi.Schema(type=openapi.TYPE_INTEGER),
-                                    'full_name': openapi.Schema(type=openapi.TYPE_STRING),
-                                    'phone_number': openapi.Schema(type=openapi.TYPE_STRING),
-                                    'email': openapi.Schema(type=openapi.TYPE_STRING),
-                                    'is_active': openapi.Schema(type=openapi.TYPE_BOOLEAN),
-                                    'date_joined': openapi.Schema(type=openapi.TYPE_STRING, format=openapi.FORMAT_DATETIME)
-                                }
-                            ),
-                            'category_data': openapi.Schema(
-                                type=openapi.TYPE_ARRAY,
-                                items=openapi.Schema(
-                                    type=openapi.TYPE_OBJECT,
-                                    properties={
-                                        'id': openapi.Schema(type=openapi.TYPE_INTEGER, description='ID категории'),
-                                        'name': openapi.Schema(type=openapi.TYPE_STRING, description='Название категории'),
-                                        'type_category': openapi.Schema(type=openapi.TYPE_STRING, description='Тип категории (by_master, by_car, by_order)'),
-                                        'type_category_display': openapi.Schema(type=openapi.TYPE_STRING, description='Отображаемое название типа категории'),
-                                        'icon': openapi.Schema(type=openapi.TYPE_STRING, description='URL иконки категории', format=openapi.FORMAT_URI)
-                                    }
-                                ),
-                                description='Данные категорий мастера (id, name, type_category, type_category_display, icon)'
-                            ),
-                            'master_in_master_data': openapi.Schema(type=openapi.TYPE_ARRAY, items=openapi.Schema(type=openapi.TYPE_STRING)),
-                            'rating_data': openapi.Schema(type=openapi.TYPE_ARRAY, items=openapi.Schema(type=openapi.TYPE_STRING)),
-                            'working_time': openapi.Schema(type=openapi.TYPE_STRING),
-                            'phone': openapi.Schema(type=openapi.TYPE_STRING),
-                            'description': openapi.Schema(type=openapi.TYPE_STRING),
-                            'images': openapi.Schema(type=openapi.TYPE_ARRAY, items=openapi.Schema(type=openapi.TYPE_STRING)),
-                            'city': openapi.Schema(type=openapi.TYPE_STRING),
-                            'address': openapi.Schema(type=openapi.TYPE_STRING),
-                            'latitude': openapi.Schema(type=openapi.TYPE_NUMBER),
-                            'longitude': openapi.Schema(type=openapi.TYPE_NUMBER),
-                            'service_type': openapi.Schema(type=openapi.TYPE_STRING),
-                            'service_type_display': openapi.Schema(type=openapi.TYPE_STRING),
-                            'services': openapi.Schema(type=openapi.TYPE_ARRAY, items=openapi.Schema(type=openapi.TYPE_STRING)),
-                            'card_number': openapi.Schema(type=openapi.TYPE_STRING),
-                            'card_expiry_month': openapi.Schema(type=openapi.TYPE_INTEGER),
-                            'card_expiry_year': openapi.Schema(type=openapi.TYPE_INTEGER),
-                            'card_cvv': openapi.Schema(type=openapi.TYPE_STRING),
-                            'balance': openapi.Schema(type=openapi.TYPE_NUMBER),
-                            'created_at': openapi.Schema(type=openapi.TYPE_STRING, format=openapi.FORMAT_DATETIME),
-                            'updated_at': openapi.Schema(type=openapi.TYPE_STRING, format=openapi.FORMAT_DATETIME),
-                            'last_activity': openapi.Schema(type=openapi.TYPE_STRING, format=openapi.FORMAT_DATETIME)
-                        }
-                    )
-                )
-            ),
-            403: openapi.Response(description="Нет прав доступа")
+            200: MasterSerializer(many=True)
         },
         tags=['Masters']
     )
     def get(self, request):
         """Получение всех профилей мастера"""
-        masters = self.get_object()
-        if not masters.exists():
+        # Если пользователь авторизован, показываем его профили
+        if request.user and request.user.is_authenticated:
+            masters = self.get_object()
+            serializer = MasterSerializer(masters, many=True, context={'request': request})
+            return Response(serializer.data, status=status.HTTP_200_OK)
+        else:
+            # Для неавторизованных пользователей возвращаем пустой список
             return Response([], status=status.HTTP_200_OK)
-        
-        serializer = MasterSerializer(masters, many=True, context={'request': request})
-        return Response(serializer.data, status=status.HTTP_200_OK)
     
-    @swagger_auto_schema(
-        operation_description="Создать профиль мастера",
-        security=[{'Bearer': []}],
-        request_body=openapi.Schema(
-            type=openapi.TYPE_OBJECT,
-            properties={
-                'city': openapi.Schema(type=openapi.TYPE_STRING, description='Город'),
-                'address': openapi.Schema(type=openapi.TYPE_STRING, description='Адрес'),
-                'latitude': openapi.Schema(type=openapi.TYPE_NUMBER, description='Широта'),
-                'longitude': openapi.Schema(type=openapi.TYPE_NUMBER, description='Долгота'),
-                'service_type': openapi.Schema(type=openapi.TYPE_STRING, description='Тип услуги (diagnostics, service, tire_repair, towing, car_wash, road_help)'),
-                'services': openapi.Schema(
-                    type=openapi.TYPE_ARRAY, 
-                    items=openapi.Schema(
-                        type=openapi.TYPE_OBJECT,
-                        properties={
-                            'name': openapi.Schema(type=openapi.TYPE_STRING, description='Название услуги'),
-                            'price_from': openapi.Schema(type=openapi.TYPE_NUMBER, description='Цена от'),
-                            'price_to': openapi.Schema(type=openapi.TYPE_NUMBER, description='Цена до')
+    @extend_schema(
+        summary="Создать профиль мастера (ТОЛЬКО для Owner)",
+        description="""
+        Создание нового профиля мастера. Эта операция доступна ТОЛЬКО пользователям с ролью 'Owner'.
+        
+        **ВАЖНО**: Вы должны быть в группе 'Owner' для выполнения этой операции!
+        
+        **ВСЕ ПОЛЯ НЕОБЯЗАТЕЛЬНЫ!** Можно отправить пустой объект {} или заполнить только нужные поля:
+        
+        - `name`: Название мастерской (строка, например: "СТО Авто-Сервис")
+        - `city`: Город мастерской (строка)
+        - `address`: Адрес мастерской (строка)
+        - `phone`: Номер телефона мастерской (строка, например: +998901234567)
+        - `working_time`: Режим работы (строка, например: "Пн-Пт: 09:00-18:00, Сб: 10:00-16:00")
+        - `latitude`: Широта местоположения (число от -90 до 90, например: 41.3111)
+        - `longitude`: Долгота местоположения (число от -180 до 180, например: 69.2797)
+        - `description`: Описание мастерской и услуг (текст)
+        - `category`: Список ID категорий услуг (массив чисел, например: [1, 2, 3])
+        - `services`: Список услуг с ценами (массив объектов, каждый содержит: name, price_from, price_to, category)
+        - `card_number`: Номер банковской карты для платежей (строка, до 19 символов)
+        - `card_expiry_month`: Месяц истечения срока карты (число 1-12)
+        - `card_expiry_year`: Год истечения срока карты (число, например: 2026)
+        - `card_cvv`: CVV код карты (строка, 3-4 цифры)
+        
+        **Примечания:**
+        - User автоматически берется из текущего авторизованного пользователя
+        - Категории должны существовать в базе данных и иметь тип 'by_master'
+        - После создания мастерской, user автоматически добавляется в группу 'Master'
+        - Можно создать мастерскую вообще без данных и заполнить потом через PUT/PATCH
+        """,
+        request=MasterCreateSerializer,
+        examples=[
+            OpenApiExample(
+                'Полный пример создания мастерской',
+                value={
+                    "name": "СТО Авто-Сервис",
+                    "city": "Ташкент",
+                    "address": "ул. Амира Темура, 15",
+                    "latitude": 41.3111,
+                    "longitude": 69.2797,
+                    "phone": "+998901234567",
+                    "working_time": "Пн-Пт: 09:00-18:00, Сб: 10:00-16:00",
+                    "description": "Автосервис с полным спектром услуг. Работаем с 2010 года. Опытные мастера, качественные запчасти.",
+                    "category": [1, 2, 3],
+                    "services": [
+                        {
+                            "name": "Замена масла",
+                            "price_from": 150000,
+                            "price_to": 300000,
+                            "category": 1
+                        },
+                        {
+                            "name": "Диагностика двигателя",
+                            "price_from": 50000,
+                            "price_to": 100000,
+                            "category": 2
                         }
-                    ), 
-                    description='Список услуг мастера'
-                ),
-                'category': openapi.Schema(
-                    type=openapi.TYPE_ARRAY,
-                    items=openapi.Schema(type=openapi.TYPE_INTEGER),
-                    description='Список ID категорий. Необязательно. Пример: [1, 2, 3]',
-                    example=[1, 2]
-                ),
-                'card_number': openapi.Schema(type=openapi.TYPE_STRING, description='Номер карты'),
-                'card_expiry_month': openapi.Schema(type=openapi.TYPE_INTEGER, description='Месяц истечения'),
-                'card_expiry_year': openapi.Schema(type=openapi.TYPE_INTEGER, description='Год истечения'),
-                'card_cvv': openapi.Schema(type=openapi.TYPE_STRING, description='CVV/CVC')
-            }
-        ),
-        responses={
-            201: openapi.Response(
-                description="Профиль мастера создан",
-                schema=openapi.Schema(
-                    type=openapi.TYPE_ARRAY,
-                    items=openapi.Schema(
-                        type=openapi.TYPE_OBJECT,
-                    properties={
-                        'id': openapi.Schema(type=openapi.TYPE_INTEGER),
-                        'user': openapi.Schema(type=openapi.TYPE_INTEGER),
-                        'user_name': openapi.Schema(type=openapi.TYPE_STRING),
-                        'user_phone': openapi.Schema(type=openapi.TYPE_STRING),
-                        'city': openapi.Schema(type=openapi.TYPE_STRING),
-                        'address': openapi.Schema(type=openapi.TYPE_STRING),
-                        'latitude': openapi.Schema(type=openapi.TYPE_NUMBER),
-                        'longitude': openapi.Schema(type=openapi.TYPE_NUMBER),
-                        'service_type': openapi.Schema(type=openapi.TYPE_STRING),
-                        'services': openapi.Schema(type=openapi.TYPE_ARRAY, items=openapi.Schema(type=openapi.TYPE_STRING)),
-                        'services_display': openapi.Schema(type=openapi.TYPE_ARRAY, items=openapi.Schema(type=openapi.TYPE_STRING)),
-                        'card_number': openapi.Schema(type=openapi.TYPE_STRING),
-                        'card_expiry_month': openapi.Schema(type=openapi.TYPE_INTEGER),
-                        'card_expiry_year': openapi.Schema(type=openapi.TYPE_INTEGER),
-                        'card_cvv': openapi.Schema(type=openapi.TYPE_STRING),
-                        'reserved_amount': openapi.Schema(type=openapi.TYPE_NUMBER),
-                        'category_data': openapi.Schema(
-                            type=openapi.TYPE_ARRAY,
-                            items=openapi.Schema(
-                                type=openapi.TYPE_OBJECT,
-                                properties={
-                                    'id': openapi.Schema(type=openapi.TYPE_INTEGER, description='ID категории'),
-                                    'name': openapi.Schema(type=openapi.TYPE_STRING, description='Название категории'),
-                                    'type_category': openapi.Schema(type=openapi.TYPE_STRING, description='Тип категории (by_master, by_car, by_order)'),
-                                    'type_category_display': openapi.Schema(type=openapi.TYPE_STRING, description='Отображаемое название типа категории'),
-                                    'icon': openapi.Schema(type=openapi.TYPE_STRING, description='URL иконки категории', format=openapi.FORMAT_URI)
-                                }
-                            ),
-                            description='Данные категорий мастера (id, name, type_category, type_category_display, icon)'
-                        ),
-                        'created_at': openapi.Schema(type=openapi.TYPE_STRING, format=openapi.FORMAT_DATETIME),
-                        'updated_at': openapi.Schema(type=openapi.TYPE_STRING, format=openapi.FORMAT_DATETIME),
-                        'last_activity': openapi.Schema(type=openapi.TYPE_STRING, format=openapi.FORMAT_DATETIME)
-                        }
-                    )
-                )
+                    ],
+                    "card_number": "8600123456789012",
+                    "card_expiry_month": 12,
+                    "card_expiry_year": 2026,
+                    "card_cvv": "123"
+                },
+                request_only=True
             ),
-            400: openapi.Response(description="Неверные данные"),
-            403: openapi.Response(description="Нет прав доступа")
+            OpenApiExample(
+                'Минимальный пример',
+                value={
+                    "name": "Мой Автосервис",
+                    "city": "Москва",
+                    "phone": "+79991234567"
+                },
+                request_only=True
+            ),
+            OpenApiExample(
+                'Пустой запрос (можно создать вообще без данных)',
+                value={},
+                request_only=True
+            )
+        ],
+        responses={
+            201: MasterSerializer,
+            400: {'type': 'object', 'properties': {'detail': {'type': 'string', 'example': 'Ошибка валидации данных'}}},
+            403: {'type': 'object', 'properties': {'detail': {'type': 'string', 'example': 'Только пользователи с ролью Owner могут создавать мастерские'}}}
         },
         tags=['Masters']
     )
     def post(self, request):
-        """Создание профиля мастера"""
+        """Создание профиля мастера (ТОЛЬКО для Owner)"""
         serializer = MasterCreateSerializer(data=request.data, context={'request': request})
         if serializer.is_valid():
             master = serializer.save()
@@ -199,356 +185,287 @@ class MasterProfileView(APIView):
 
 class MasterListView(APIView):
     """
-    API для получения списка мастеров с возможностью фильтрации.
-    
-    Поддерживаемые фильтры:
-    - city: фильтр по городу
-    - service: фильтр по типу услуги
-    - point1_lat, point1_lon, point2_lat, point2_lon, point3_lat, point3_lon, point4_lat, point4_lon: 
-      фильтр по прямоугольной области (4 точки)
-    - page, page_size: пагинация
+    API для получения списка мастеров с фильтрацией (публичный доступ).
+    Если фильтры не указаны, возвращается пустой список!
     """
-    permission_classes = [IsAuthenticated]
+    permission_classes = [AllowAny]
     
-    # Константы для валидации
-    MIN_LATITUDE = -90
-    MAX_LATITUDE = 90
-    MIN_LONGITUDE = -180
-    MAX_LONGITUDE = 180
-    DEFAULT_PAGE_SIZE = 20
-    MAX_PAGE_SIZE = 100
-    
-    @swagger_auto_schema(
-        operation_description="Получить список всех мастеров с возможностью фильтрации",
-        security=[{'Bearer': []}],
-        manual_parameters=[
-            openapi.Parameter(
-                'city', 
-                openapi.IN_QUERY, 
-                description="Фильтр по городу (частичное совпадение)", 
-                type=openapi.TYPE_STRING,
+    @extend_schema(
+        summary="Получить список мастеров с фильтрацией",
+        description="""
+        Получить список мастеров с обязательной фильтрацией. 
+        
+        **ВАЖНО**: Если фильтры не указаны, возвращается пустой список!
+        
+        **Параметры фильтрации:**
+        - `category` - ID категории (by_order или by_master). При by_order ищет мастеров через service_type или название
+        - `name` - Название мастерской (поиск по частичному совпадению)
+        - `lat` - Широта текущего местоположения пользователя (требуется вместе с long и radius)
+        - `long` - Долгота текущего местоположения пользователя (требуется вместе с lat и radius)
+        - `radius` - Радиус поиска в километрах (по умолчанию 10 км, требуется вместе с lat и long)
+        
+        **Примеры использования:**
+        - `/api/master/masters/list/?category=1` - мастера по категории (умный поиск)
+        - `/api/master/masters/list/?name=Авто` - поиск по названию
+        - `/api/master/masters/list/?lat=41.3111&long=69.2797&radius=5` - мастера в радиусе 5 км
+        - `/api/master/masters/list/?category=1&lat=41.3111&long=69.2797&radius=10` - комбинация фильтров
+        
+        **Умный поиск по категории:**
+        - Если category типа by_order: ищет мастеров через MasterServiceItems по service_type или названию
+        - Если category типа by_master: прямой поиск по категории мастера
+        - Точность поиска: 80-90%
+        
+        **Геолокация:**
+        - Расчет расстояния выполняется по формуле Haversine
+        - Возвращаются только мастера с заполненными координатами (latitude и longitude)
+        - Поле `distance` добавляется в ответ (расстояние в километрах от точки пользователя)
+        """,
+        parameters=[
+            OpenApiParameter(
+                name='category',
+                type=int,
+                location=OpenApiParameter.QUERY,
+                description='ID категории мастера',
                 required=False
             ),
-            openapi.Parameter(
-                'service_type', 
-                openapi.IN_QUERY, 
-                description="Фильтр по типу услуги (diagnostics, service, tire_repair, towing, car_wash, road_help)", 
-                type=openapi.TYPE_STRING,
-                enum=['diagnostics', 'service', 'tire_repair', 'towing', 'car_wash', 'road_help'],
+            OpenApiParameter(
+                name='name',
+                type=str,
+                location=OpenApiParameter.QUERY,
+                description='Название мастерской (поиск по частичному совпадению)',
                 required=False
             ),
-            openapi.Parameter(
-                'point1_lat', 
-                openapi.IN_QUERY, 
-                description="Широта первой точки", 
-                type=openapi.TYPE_NUMBER,
+            OpenApiParameter(
+                name='lat',
+                type=float,
+                location=OpenApiParameter.QUERY,
+                description='Широта текущего местоположения пользователя',
                 required=False
             ),
-            openapi.Parameter(
-                'point1_lon', 
-                openapi.IN_QUERY, 
-                description="Долгота первой точки", 
-                type=openapi.TYPE_NUMBER,
+            OpenApiParameter(
+                name='long',
+                type=float,
+                location=OpenApiParameter.QUERY,
+                description='Долгота текущего местоположения пользователя',
                 required=False
             ),
-            openapi.Parameter(
-                'point2_lat', 
-                openapi.IN_QUERY, 
-                description="Широта второй точки", 
-                type=openapi.TYPE_NUMBER,
-                required=False
-            ),
-            openapi.Parameter(
-                'point2_lon', 
-                openapi.IN_QUERY, 
-                description="Долгота второй точки", 
-                type=openapi.TYPE_NUMBER,
-                required=False
-            ),
-            openapi.Parameter(
-                'point3_lat', 
-                openapi.IN_QUERY, 
-                description="Широта третьей точки", 
-                type=openapi.TYPE_NUMBER,
-                required=False
-            ),
-            openapi.Parameter(
-                'point3_lon', 
-                openapi.IN_QUERY, 
-                description="Долгота третьей точки", 
-                type=openapi.TYPE_NUMBER,
-                required=False
-            ),
-            openapi.Parameter(
-                'point4_lat', 
-                openapi.IN_QUERY, 
-                description="Широта четвертой точки", 
-                type=openapi.TYPE_NUMBER,
-                required=False
-            ),
-            openapi.Parameter(
-                'point4_lon', 
-                openapi.IN_QUERY, 
-                description="Долгота четвертой точки", 
-                type=openapi.TYPE_NUMBER,
-                required=False
-            ),
-            openapi.Parameter(
-                'page', 
-                openapi.IN_QUERY, 
-                description="Номер страницы (начиная с 1)", 
-                type=openapi.TYPE_INTEGER,
-                required=False
-            ),
-            openapi.Parameter(
-                'page_size', 
-                openapi.IN_QUERY, 
-                description=f"Размер страницы (максимум {MAX_PAGE_SIZE})", 
-                type=openapi.TYPE_INTEGER,
+            OpenApiParameter(
+                name='radius',
+                type=float,
+                location=OpenApiParameter.QUERY,
+                description='Радиус поиска в километрах (по умолчанию 10 км)',
                 required=False
             )
         ],
         responses={
-            200: openapi.Response(
-                description="Список мастеров с метаданными пагинации",
-                schema=openapi.Schema(
-                    type=openapi.TYPE_OBJECT,
-                    properties={
-                        'results': openapi.Schema(
-                            type=openapi.TYPE_ARRAY,
-                            items=openapi.Schema(
-                                type=openapi.TYPE_OBJECT,
-                                properties={
-                                    'id': openapi.Schema(type=openapi.TYPE_INTEGER),
-                                    'user': openapi.Schema(type=openapi.TYPE_INTEGER),
-                                    'user_name': openapi.Schema(type=openapi.TYPE_STRING),
-                                    'user_phone': openapi.Schema(type=openapi.TYPE_STRING),
-                                    'city': openapi.Schema(type=openapi.TYPE_STRING),
-                                    'address': openapi.Schema(type=openapi.TYPE_STRING),
-                                    'working_time': openapi.Schema(type=openapi.TYPE_STRING),
-                                    'phone': openapi.Schema(type=openapi.TYPE_STRING),
-                                    'description': openapi.Schema(type=openapi.TYPE_STRING),
-                                    'images': openapi.Schema(type=openapi.TYPE_ARRAY, items=openapi.Schema(type=openapi.TYPE_STRING)),
-                                    'latitude': openapi.Schema(type=openapi.TYPE_NUMBER),
-                                    'longitude': openapi.Schema(type=openapi.TYPE_NUMBER),
-                                    'services': openapi.Schema(type=openapi.TYPE_ARRAY, items=openapi.Schema(type=openapi.TYPE_STRING)),
-                                    'services_display': openapi.Schema(type=openapi.TYPE_ARRAY, items=openapi.Schema(type=openapi.TYPE_STRING)),
-                                    'card_number': openapi.Schema(type=openapi.TYPE_STRING),
-                                    'card_expiry_month': openapi.Schema(type=openapi.TYPE_INTEGER),
-                                    'card_expiry_year': openapi.Schema(type=openapi.TYPE_INTEGER),
-                                    'card_cvv': openapi.Schema(type=openapi.TYPE_STRING),
-                                    'reserved_amount': openapi.Schema(type=openapi.TYPE_NUMBER),
-                                    'category_data': openapi.Schema(
-                                        type=openapi.TYPE_ARRAY,
-                                        items=openapi.Schema(
-                                            type=openapi.TYPE_OBJECT,
-                                            properties={
-                                                'id': openapi.Schema(type=openapi.TYPE_INTEGER, description='ID категории'),
-                                                'name': openapi.Schema(type=openapi.TYPE_STRING, description='Название категории'),
-                                                'icon': openapi.Schema(type=openapi.TYPE_STRING, description='URL иконки категории', format=openapi.FORMAT_URI)
-                                            }
-                                        ),
-                                        description='Данные категорий мастера (id, name, icon)'
-                                    ),
-                                    'created_at': openapi.Schema(type=openapi.TYPE_STRING, format=openapi.FORMAT_DATETIME),
-                                    'updated_at': openapi.Schema(type=openapi.TYPE_STRING, format=openapi.FORMAT_DATETIME),
-                                    'last_activity': openapi.Schema(type=openapi.TYPE_STRING, format=openapi.FORMAT_DATETIME)
-                                }
-                            )
-                        ),
-                        'count': openapi.Schema(type=openapi.TYPE_INTEGER),
-                        'page': openapi.Schema(type=openapi.TYPE_INTEGER),
-                        'page_size': openapi.Schema(type=openapi.TYPE_INTEGER),
-                        'total_pages': openapi.Schema(type=openapi.TYPE_INTEGER)
-                    }
-                )
-            ),
-            400: openapi.Response(description="Неверные параметры запроса"),
-            403: openapi.Response(description="Нет прав доступа")
+            200: MasterSerializer(many=True)
         },
         tags=['Masters']
     )
     def get(self, request):
-        """Получение списка мастеров с фильтрацией и пагинацией"""
-        try:
-            # Получаем базовый queryset мастеров с координатами
-            masters = self._get_base_queryset()
-            
-            # Применяем фильтры
-            masters = self._apply_filters(masters, request)
-            
-            # Применяем пагинацию
-            paginated_data = self._apply_pagination(masters, request)
-            
-            # Сериализуем данные
-            serializer = MasterSerializer(
-                paginated_data['results'], 
-                many=True, 
-                context={'request': request}
-            )
-            
-            return Response({
-                'results': serializer.data,
-                'count': paginated_data['count'],
-                'page': paginated_data['page'],
-                'page_size': paginated_data['page_size'],
-                'total_pages': paginated_data['total_pages']
-            }, status=status.HTTP_200_OK)
-            
-        except ValueError as e:
-            return Response(
-                {'error': str(e)}, 
-                status=status.HTTP_400_BAD_REQUEST
-            )
-    
-    def _get_base_queryset(self):
-        """Получение базового queryset мастеров с координатами"""
-        return Master.objects.filter(
-            latitude__isnull=False,
-            longitude__isnull=False
-        )
-    
-    def _apply_filters(self, queryset, request):
-        """Применение фильтров к queryset"""
-        # Фильтр по городу
-        city = request.query_params.get('city')
-        if city:
-            queryset = queryset.filter(city__icontains=city)
+        """Получение списка мастеров с фильтрацией"""
+        # Получаем параметры фильтрации
+        category_id = request.query_params.get('category')
+        name = request.query_params.get('name')
+        user_lat = request.query_params.get('lat')
+        user_long = request.query_params.get('long')
+        radius = request.query_params.get('radius', 10)  # По умолчанию 10 км
         
-        # Фильтр по услуге
-        service = request.query_params.get('service')
-        if service:
-            # Фильтруем по услугам через MasterService
-            queryset = queryset.filter(master_services__name__icontains=service).distinct()
+        # Если нет ни одного фильтра, возвращаем пустой список
+        if not any([category_id, name, user_lat, user_long]):
+            return Response([], status=status.HTTP_200_OK)
         
-        # Фильтр по типу услуги
-        service_type = request.query_params.get('service_type')
-        print(f"Service type: {service_type}")
-        if service_type:
-            queryset = queryset.filter(service_type=service_type)
+        # Начинаем с всех мастеров
+        masters = Master.objects.all()
         
-        # Фильтр по прямоугольной области
-        area_filter = self._get_area_filter(request)
-        if area_filter:
-            queryset = queryset.filter(**area_filter)
+        from apps.categories.models import Category
+        from django.db.models import Q
         
-        return queryset
-    
-    def _get_area_filter(self, request):
-        """Получение фильтра по прямоугольной области"""
-        # Получаем параметры точек
-        point_params = {
-            'point1': (request.query_params.get('point1_lat'), request.query_params.get('point1_lon')),
-            'point2': (request.query_params.get('point2_lat'), request.query_params.get('point2_lon')),
-            'point3': (request.query_params.get('point3_lat'), request.query_params.get('point3_lon')),
-            'point4': (request.query_params.get('point4_lat'), request.query_params.get('point4_lon'))
-        }
+        # Собираем все условия поиска (OR между ними)
+        search_conditions = Q()
         
-        # Проверяем, что все параметры переданы
-        all_params = [param for point in point_params.values() for param in point]
-        if any(all_params) and not all(all_params):
-            raise ValueError(
-                'Для фильтрации по области необходимо передать все восемь параметров: '
-                'point1_lat, point1_lon, point2_lat, point2_lon, '
-                'point3_lat, point3_lon, point4_lat, point4_lon'
-            )
-        
-        if not all(all_params):
-            return None
-        
-        # Валидируем и преобразуем координаты
-        points = []
-        for point_name, (lat_str, lon_str) in point_params.items():
+        # Фильтр по категории (умный поиск)
+        if category_id:
             try:
-                lat = float(lat_str)
-                lon = float(lon_str)
-                self._validate_coordinates(lat, lon, point_name)
-                points.append((lat, lon))
-            except (ValueError, TypeError) as e:
-                raise ValueError(f'Неверные координаты для {point_name}: {str(e)}')
+                category_id = int(category_id)
+                category = Category.objects.get(id=category_id)
+                
+                # Если category типа by_order (из заказа)
+                if category.type_category == 'by_order':
+                    # Ищем мастеров через MasterServiceItems
+                    category_conditions = Q()
+                    
+                    # 1. Поиск по service_type (если заполнен)
+                    if category.service_type:
+                        category_conditions |= Q(
+                            master_services__master_service_items__category__service_type__icontains=category.service_type
+                        )
+                        # Также ищем в категориях самого Master
+                        category_conditions |= Q(
+                            category__service_type__icontains=category.service_type
+                        )
+                    
+                    # 2. Поиск по названию категории (частичное совпадение)
+                    if category.name:
+                        # Ищем в названии услуги MasterServiceItems
+                        category_conditions |= Q(
+                            master_services__master_service_items__name__icontains=category.name
+                        )
+                        # Ищем в названии категории MasterServiceItems
+                        category_conditions |= Q(
+                            master_services__master_service_items__category__name__icontains=category.name
+                        )
+                        # Ищем в категориях самого Master
+                        category_conditions |= Q(
+                            category__name__icontains=category.name
+                        )
+                        # Ищем в названии мастерской
+                        category_conditions |= Q(
+                            name__icontains=category.name
+                        )
+                    
+                    search_conditions |= category_conditions
+                
+                # Если category типа by_master (напрямую)
+                elif category.type_category == 'by_master':
+                    search_conditions |= Q(category__id=category_id)
+                
+                else:
+                    # Для других типов (by_car) - прямой поиск
+                    search_conditions |= Q(category__id=category_id)
+                    
+            except Category.DoesNotExist:
+                return Response(
+                    {'error': 'Категория не найдена'}, 
+                    status=status.HTTP_404_NOT_FOUND
+                )
+            except (ValueError, TypeError):
+                return Response(
+                    {'error': 'Неверный формат category ID'}, 
+                    status=status.HTTP_400_BAD_REQUEST
+                )
         
-        # Вычисляем границы прямоугольника
-        lats = [point[0] for point in points]
-        lons = [point[1] for point in points]
+        # Фильтр по названию (расширенный поиск)
+        if name:
+            name_conditions = Q()
+            # Поиск в названии мастерской
+            name_conditions |= Q(name__icontains=name)
+            # Поиск в названии услуг
+            name_conditions |= Q(master_services__master_service_items__name__icontains=name)
+            # Поиск в названии категорий услуг
+            name_conditions |= Q(master_services__master_service_items__category__name__icontains=name)
+            # Поиск в service_type категорий услуг
+            name_conditions |= Q(master_services__master_service_items__category__service_type__icontains=name)
+            # Поиск в категориях самого Master
+            name_conditions |= Q(category__name__icontains=name)
+            name_conditions |= Q(category__service_type__icontains=name)
+            # Поиск в адресе и городе
+            name_conditions |= Q(city__icontains=name)
+            name_conditions |= Q(address__icontains=name)
+            
+            search_conditions |= name_conditions
         
-        min_lat = min(lats)
-        max_lat = max(lats)
-        min_lon = min(lons)
-        max_lon = max(lons)
+        # Применяем все условия поиска
+        if search_conditions:
+            masters = masters.filter(search_conditions).distinct()
         
-        # Проверяем, что точки образуют прямоугольник
-        # Для правильного прямоугольника должны быть только 2 уникальных значения по каждой оси
-        unique_lats = len(set(lats))
-        unique_lons = len(set(lons))
+        # Фильтр по геолокации (расстояние)
+        if user_lat and user_long:
+            try:
+                user_lat = float(user_lat)
+                user_long = float(user_long)
+                radius = float(radius)
+                
+                # Валидация координат
+                if not (-90 <= user_lat <= 90):
+                    return Response(
+                        {'error': 'Широта должна быть между -90 и 90'}, 
+                        status=status.HTTP_400_BAD_REQUEST
+                    )
+                if not (-180 <= user_long <= 180):
+                    return Response(
+                        {'error': 'Долгота должна быть между -180 и 180'}, 
+                        status=status.HTTP_400_BAD_REQUEST
+                    )
+                
+                # Фильтруем мастеров с координатами
+                masters = masters.exclude(latitude__isnull=True).exclude(longitude__isnull=True)
+                
+                # Вычисляем расстояние для каждого мастера
+                filtered_masters = []
+                for master in masters:
+                    distance = self.calculate_distance(
+                        user_lat, user_long,
+                        float(master.latitude), float(master.longitude)
+                    )
+                    # Добавляем расстояние как атрибут для отображения
+                    master.distance = round(distance, 2)
+                    
+                    # Фильтруем только тех, кто в пределах радиуса
+                    if distance <= radius:
+                        filtered_masters.append(master)
+                
+                # Сортируем по расстоянию (ближайшие сначала)
+                filtered_masters.sort(key=lambda x: x.distance)
+                masters = filtered_masters
+                
+            except (ValueError, TypeError):
+                return Response(
+                    {'error': 'Неверный формат координат или радиуса'}, 
+                    status=status.HTTP_400_BAD_REQUEST
+                )
         
+        # Если после фильтрации нет результатов
+        if not masters:
+            return Response([], status=status.HTTP_200_OK)
         
-        return {
-            'latitude__gte': min_lat,
-            'latitude__lte': max_lat,
-            'longitude__gte': min_lon,
-            'longitude__lte': max_lon
-        }
+        # Сериализуем результаты
+        serializer = MasterSerializer(masters, many=True, context={'request': request})
+        return Response(serializer.data, status=status.HTTP_200_OK)
     
-    def _validate_coordinates(self, lat, lon, point_name):
-        """Валидация координат"""
-        if not (self.MIN_LATITUDE <= lat <= self.MAX_LATITUDE):
-            raise ValueError(
-                f'Широта для {point_name} должна быть между {self.MIN_LATITUDE} и {self.MAX_LATITUDE}, '
-                f'получено: {lat}'
-            )
+    def calculate_distance(self, lat1, lon1, lat2, lon2):
+        """
+        Вычисление расстояния между двумя точками по формуле Haversine
+        Возвращает расстояние в километрах
+        """
+        from math import radians, sin, cos, sqrt, atan2
         
-        if not (self.MIN_LONGITUDE <= lon <= self.MAX_LONGITUDE):
-            raise ValueError(
-                f'Долгота для {point_name} должна быть между {self.MIN_LONGITUDE} и {self.MAX_LONGITUDE}, '
-                f'получено: {lon}'
-            )
-    
-    def _apply_pagination(self, queryset, request):
-        """Применение пагинации к queryset"""
-        try:
-            page = int(request.query_params.get('page', 1))
-            page_size = int(request.query_params.get('page_size', self.DEFAULT_PAGE_SIZE))
-        except (ValueError, TypeError):
-            page = 1
-            page_size = self.DEFAULT_PAGE_SIZE
+        # Радиус Земли в километрах
+        R = 6371.0
         
-        # Валидация параметров пагинации
-        if page < 1:
-            page = 1
+        # Конвертируем градусы в радианы
+        lat1_rad = radians(lat1)
+        lon1_rad = radians(lon1)
+        lat2_rad = radians(lat2)
+        lon2_rad = radians(lon2)
         
-        if page_size < 1:
-            page_size = self.DEFAULT_PAGE_SIZE
-        elif page_size > self.MAX_PAGE_SIZE:
-            page_size = self.MAX_PAGE_SIZE
+        # Разница координат
+        dlat = lat2_rad - lat1_rad
+        dlon = lon2_rad - lon1_rad
         
-        # Вычисляем пагинацию
-        total_count = queryset.count()
-        start = (page - 1) * page_size
-        end = start + page_size
+        # Формула Haversine
+        a = sin(dlat / 2)**2 + cos(lat1_rad) * cos(lat2_rad) * sin(dlon / 2)**2
+        c = 2 * atan2(sqrt(a), sqrt(1 - a))
         
-        results = queryset[start:end]
-        total_pages = (total_count + page_size - 1) // page_size
-        
-        return {
-            'results': results,
-            'count': total_count,
-            'page': page,
-            'page_size': page_size,
-            'total_pages': total_pages
-        }
+        distance = R * c
+        return distance
 
 
 class MasterDetailsView(APIView):
     """
     API для операций с конкретным мастером по ID.
-    
-    Поддерживаемые операции:
-    - GET: получение деталей мастера
-    - PUT: полное обновление мастера
-    - PATCH: частичное обновление мастера
-    - DELETE: удаление мастера
+    GET - доступно всем пользователям (публичный доступ)
+    PUT/PATCH - доступно ТОЛЬКО для Owner
+    DELETE - доступно ТОЛЬКО для Owner
     """
-    permission_classes = [IsAuthenticated]
+    
+    def get_permissions(self):
+        """Разные права доступа для разных методов"""
+        if self.request.method in ['PUT', 'PATCH', 'DELETE']:
+            return [IsOwnerGroup()]
+        elif self.request.method == 'GET':
+            return [AllowAny()]
+        return [IsAuthenticated()]
     
     def get_object(self, master_id):
         """Получение мастера по ID"""
@@ -557,44 +474,17 @@ class MasterDetailsView(APIView):
         except Master.DoesNotExist:
             return None
     
-    @swagger_auto_schema(
-        operation_description="Получить детали мастера по ID",
-        security=[{'Bearer': []}],
+    @extend_schema(
+        summary="Получить детали мастера по ID",
+        description="Получить подробную информацию о мастерской по ID. Доступно для всех пользователей (публичный доступ).",
         responses={
-            200: openapi.Response(
-                description="Детали мастера",
-                schema=openapi.Schema(
-                    type=openapi.TYPE_OBJECT,
-                    properties={
-                        'id': openapi.Schema(type=openapi.TYPE_INTEGER),
-                        'user': openapi.Schema(type=openapi.TYPE_INTEGER),
-                        'user_name': openapi.Schema(type=openapi.TYPE_STRING),
-                        'user_phone': openapi.Schema(type=openapi.TYPE_STRING),
-                        'city': openapi.Schema(type=openapi.TYPE_STRING),
-                        'address': openapi.Schema(type=openapi.TYPE_STRING),
-                        'latitude': openapi.Schema(type=openapi.TYPE_NUMBER),
-                        'longitude': openapi.Schema(type=openapi.TYPE_NUMBER),
-                        'service_type': openapi.Schema(type=openapi.TYPE_STRING),
-                        'services': openapi.Schema(type=openapi.TYPE_ARRAY, items=openapi.Schema(type=openapi.TYPE_STRING)),
-                        'services_display': openapi.Schema(type=openapi.TYPE_ARRAY, items=openapi.Schema(type=openapi.TYPE_STRING)),
-                        'card_number': openapi.Schema(type=openapi.TYPE_STRING),
-                        'card_expiry_month': openapi.Schema(type=openapi.TYPE_INTEGER),
-                        'card_expiry_year': openapi.Schema(type=openapi.TYPE_INTEGER),
-                        'card_cvv': openapi.Schema(type=openapi.TYPE_STRING),
-                        'reserved_amount': openapi.Schema(type=openapi.TYPE_NUMBER),
-                        'created_at': openapi.Schema(type=openapi.TYPE_STRING, format=openapi.FORMAT_DATETIME),
-                        'updated_at': openapi.Schema(type=openapi.TYPE_STRING, format=openapi.FORMAT_DATETIME),
-                        'last_activity': openapi.Schema(type=openapi.TYPE_STRING, format=openapi.FORMAT_DATETIME)
-                    }
-                )
-            ),
-            404: openapi.Response(description="Мастер не найден"),
-            403: openapi.Response(description="Нет прав доступа")
+            200: MasterSerializer,
+            404: {'type': 'object', 'properties': {'error': {'type': 'string', 'example': 'Мастер не найден'}}}
         },
         tags=['Masters']
     )
     def get(self, request, master_id):
-        """Получение деталей мастера по ID"""
+        """Получение деталей мастера"""
         master = self.get_object(master_id)
         if not master:
             return Response(
@@ -605,70 +495,26 @@ class MasterDetailsView(APIView):
         serializer = MasterSerializer(master, context={'request': request})
         return Response(serializer.data, status=status.HTTP_200_OK)
     
-    @swagger_auto_schema(
-        operation_description="Обновить мастера по ID",
-        security=[{'Bearer': []}],
-        consumes=['multipart/form-data', 'application/json'],
-        request_body=openapi.Schema(
-            type=openapi.TYPE_OBJECT,
-            properties={
-                'city': openapi.Schema(type=openapi.TYPE_STRING, description='Город'),
-                'address': openapi.Schema(type=openapi.TYPE_STRING, description='Адрес'),
-                'latitude': openapi.Schema(type=openapi.TYPE_NUMBER, description='Широта'),
-                'longitude': openapi.Schema(type=openapi.TYPE_NUMBER, description='Долгота'),
-                'phone': openapi.Schema(type=openapi.TYPE_STRING, description='Телефон'),
-                'working_time': openapi.Schema(type=openapi.TYPE_STRING, description='Рабочее время'),
-                'service_type': openapi.Schema(type=openapi.TYPE_STRING, description='Тип услуги'),
-                'card_number': openapi.Schema(type=openapi.TYPE_STRING, description='Номер карты'),
-                'card_expiry_month': openapi.Schema(type=openapi.TYPE_INTEGER, description='Месяц истечения'),
-                'card_expiry_year': openapi.Schema(type=openapi.TYPE_INTEGER, description='Год истечения'),
-                'card_cvv': openapi.Schema(type=openapi.TYPE_STRING, description='CVV/CVC'),
-                'description': openapi.Schema(type=openapi.TYPE_STRING, description='Описание'),
-                'images': openapi.Schema(
-                    type=openapi.TYPE_ARRAY,
-                    items=openapi.Schema(type=openapi.TYPE_STRING, format=openapi.FORMAT_BINARY),
-                    description='Изображения мастера (можно загрузить несколько)'
-                )
-            }
-        ),
+    @extend_schema(
+        summary="Обновить мастера по ID (ТОЛЬКО для Owner)",
+        description="""
+        Полное обновление информации о мастерской. Эта операция доступна ТОЛЬКО пользователям с ролью 'Owner'.
+        
+        **ВАЖНО**: Вы должны быть в группе 'Owner' для выполнения этой операции!
+        
+        Все поля необязательны, можно обновить только нужные поля.
+        """,
+        request=MasterUpdateSerializer,
         responses={
-            200: openapi.Response(
-                description="Мастер обновлен",
-                schema=openapi.Schema(
-                    type=openapi.TYPE_OBJECT,
-                    properties={
-                        'id': openapi.Schema(type=openapi.TYPE_INTEGER),
-                        'user_info': openapi.Schema(type=openapi.TYPE_OBJECT),
-                        'city': openapi.Schema(type=openapi.TYPE_STRING),
-                        'address': openapi.Schema(type=openapi.TYPE_STRING),
-                        'latitude': openapi.Schema(type=openapi.TYPE_NUMBER),
-                        'longitude': openapi.Schema(type=openapi.TYPE_NUMBER),
-                        'phone': openapi.Schema(type=openapi.TYPE_STRING),
-                        'working_time': openapi.Schema(type=openapi.TYPE_STRING),
-                        'service_type_display': openapi.Schema(type=openapi.TYPE_STRING),
-                        'services': openapi.Schema(type=openapi.TYPE_ARRAY, items=openapi.Schema(type=openapi.TYPE_OBJECT)),
-                        'card_number': openapi.Schema(type=openapi.TYPE_STRING),
-                        'card_expiry_month': openapi.Schema(type=openapi.TYPE_INTEGER),
-                        'card_expiry_year': openapi.Schema(type=openapi.TYPE_INTEGER),
-                        'card_cvv': openapi.Schema(type=openapi.TYPE_STRING),
-                        'balance': openapi.Schema(type=openapi.TYPE_NUMBER),
-                        'reserved_amount': openapi.Schema(type=openapi.TYPE_NUMBER),
-                        'description': openapi.Schema(type=openapi.TYPE_STRING),
-                        'images': openapi.Schema(type=openapi.TYPE_ARRAY, items=openapi.Schema(type=openapi.TYPE_OBJECT)),
-                        'created_at': openapi.Schema(type=openapi.TYPE_STRING, format=openapi.FORMAT_DATETIME),
-                        'updated_at': openapi.Schema(type=openapi.TYPE_STRING, format=openapi.FORMAT_DATETIME),
-                        'last_activity': openapi.Schema(type=openapi.TYPE_STRING, format=openapi.FORMAT_DATETIME)
-                    }
-                )
-            ),
-            400: openapi.Response(description="Неверные данные"),
-            404: openapi.Response(description="Мастер не найден"),
-            403: openapi.Response(description="Нет прав доступа")
+            200: MasterSerializer,
+            400: {'type': 'object', 'properties': {'detail': {'type': 'string'}}},
+            404: {'type': 'object', 'properties': {'error': {'type': 'string'}}},
+            403: {'type': 'object', 'properties': {'detail': {'type': 'string'}}}
         },
         tags=['Masters']
     )
     def put(self, request, master_id):
-        """Полное обновление мастера по ID"""
+        """Полное обновление мастера"""
         master = self.get_object(master_id)
         if not master:
             return Response(
@@ -676,92 +522,63 @@ class MasterDetailsView(APIView):
                 status=status.HTTP_404_NOT_FOUND
             )
         
-        # Multipart/form-data uchun request.data va request.FILES ni birlashtirish
-        # QueryDict ni dict ga o'tkazish
-        if hasattr(request.data, 'dict'):
-            data = request.data.dict()
-        else:
-            data = dict(request.data) if hasattr(request.data, '__iter__') else request.data
-        
-        # Agar images ko'p bo'lsa, ularni listga o'tkazish
-        if request.FILES:
-            images = request.FILES.getlist('images')
-            if images:
-                data['images'] = images
-        
-        serializer = MasterUpdateSerializer(master, data=data, context={'request': request})
-        if serializer.is_valid():
-            serializer.save()
-            # To'liq master ma'lumotlarini qaytarish
-            response_serializer = MasterSerializer(master, context={'request': request})
-            return Response(response_serializer.data, status=status.HTTP_200_OK)
-        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
-    
-    @swagger_auto_schema(
-        operation_description="Частичное обновление мастера по ID",
-        security=[{'Bearer': []}],
-        request_body=MasterSerializer,
-        responses={
-            200: openapi.Response(
-                description="Мастер обновлен",
-                schema=openapi.Schema(
-                    type=openapi.TYPE_OBJECT,
-                    properties={
-                        'id': openapi.Schema(type=openapi.TYPE_INTEGER),
-                        'user': openapi.Schema(type=openapi.TYPE_INTEGER),
-                        'user_name': openapi.Schema(type=openapi.TYPE_STRING),
-                        'user_phone': openapi.Schema(type=openapi.TYPE_STRING),
-                        'city': openapi.Schema(type=openapi.TYPE_STRING),
-                        'address': openapi.Schema(type=openapi.TYPE_STRING),
-                        'latitude': openapi.Schema(type=openapi.TYPE_NUMBER),
-                        'longitude': openapi.Schema(type=openapi.TYPE_NUMBER),
-                        'service_type': openapi.Schema(type=openapi.TYPE_STRING),
-                        'services': openapi.Schema(type=openapi.TYPE_ARRAY, items=openapi.Schema(type=openapi.TYPE_STRING)),
-                        'services_display': openapi.Schema(type=openapi.TYPE_ARRAY, items=openapi.Schema(type=openapi.TYPE_STRING)),
-                        'card_number': openapi.Schema(type=openapi.TYPE_STRING),
-                        'card_expiry_month': openapi.Schema(type=openapi.TYPE_INTEGER),
-                        'card_expiry_year': openapi.Schema(type=openapi.TYPE_INTEGER),
-                        'card_cvv': openapi.Schema(type=openapi.TYPE_STRING),
-                        'reserved_amount': openapi.Schema(type=openapi.TYPE_NUMBER),
-                        'created_at': openapi.Schema(type=openapi.TYPE_STRING, format=openapi.FORMAT_DATETIME),
-                        'updated_at': openapi.Schema(type=openapi.TYPE_STRING, format=openapi.FORMAT_DATETIME),
-                        'last_activity': openapi.Schema(type=openapi.TYPE_STRING, format=openapi.FORMAT_DATETIME)
-                    }
-                )
-            ),
-            400: openapi.Response(description="Неверные данные"),
-            404: openapi.Response(description="Мастер не найден"),
-            403: openapi.Response(description="Нет прав доступа")
-        },
-        tags=['Masters']
-    )
-    def patch(self, request, master_id):
-        """Частичное обновление мастера по ID"""
-        master = self.get_object(master_id)
-        if not master:
-            return Response(
-                {'error': 'Мастер не найден'}, 
-                status=status.HTTP_404_NOT_FOUND
-            )
-        
-        serializer = MasterSerializer(master, data=request.data, partial=True, context={'request': request})
+        serializer = MasterUpdateSerializer(master, data=request.data, context={'request': request})
         if serializer.is_valid():
             serializer.save()
             return Response(serializer.data, status=status.HTTP_200_OK)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
     
-    @swagger_auto_schema(
-        operation_description="Удалить мастера по ID",
-        security=[{'Bearer': []}],
+    @extend_schema(
+        summary="Частичное обновление мастера по ID (ТОЛЬКО для Owner)",
+        description="""
+        Частичное обновление информации о мастерской. Эта операция доступна ТОЛЬКО пользователям с ролью 'Owner'.
+        
+        **ВАЖНО**: Вы должны быть в группе 'Owner' для выполнения этой операции!
+        
+        Можно обновить только нужные поля, не передавая все остальные.
+        """,
+        request=MasterUpdateSerializer,
         responses={
-            204: openapi.Response(description="Мастер удален"),
-            404: openapi.Response(description="Мастер не найден"),
-            403: openapi.Response(description="Нет прав доступа")
+            200: MasterSerializer,
+            400: {'type': 'object', 'properties': {'detail': {'type': 'string', 'example': 'Ошибка валидации данных'}}},
+            404: {'type': 'object', 'properties': {'error': {'type': 'string', 'example': 'Мастер не найден'}}},
+            403: {'type': 'object', 'properties': {'detail': {'type': 'string', 'example': 'Только пользователи с ролью Owner могут обновлять мастерские'}}}
+        },
+        tags=['Masters']
+    )
+    def patch(self, request, master_id):
+        """Частичное обновление мастера (ТОЛЬКО для Owner)"""
+        master = self.get_object(master_id)
+        if not master:
+            return Response(
+                {'error': 'Мастер не найден'}, 
+                status=status.HTTP_404_NOT_FOUND
+            )
+        
+        serializer = MasterUpdateSerializer(master, data=request.data, partial=True, context={'request': request})
+        if serializer.is_valid():
+            serializer.save()
+            return Response(serializer.data, status=status.HTTP_200_OK)
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+    
+    @extend_schema(
+        summary="Удалить мастера по ID (ТОЛЬКО для Owner)",
+        description="""
+        Удаление мастерской из системы. Эта операция доступна ТОЛЬКО пользователям с ролью 'Owner'.
+        
+        **ВАЖНО**: Вы должны быть в группе 'Owner' для выполнения этой операции!
+        
+        **ВНИМАНИЕ**: Это действие удалит мастерскую и все связанные с ней данные (услуги, изображения и т.д.)
+        """,
+        responses={
+            204: {'description': 'Мастер успешно удален'},
+            404: {'type': 'object', 'properties': {'error': {'type': 'string', 'example': 'Мастер не найден'}}},
+            403: {'type': 'object', 'properties': {'detail': {'type': 'string', 'example': 'Только пользователи с ролью Owner могут удалять мастерские'}}}
         },
         tags=['Masters']
     )
     def delete(self, request, master_id):
-        """Удаление мастера по ID"""
+        """Удаление мастера (ТОЛЬКО для Owner)"""
         master = self.get_object(master_id)
         if not master:
             return Response(
@@ -776,8 +593,6 @@ class MasterDetailsView(APIView):
 class MasterServiceView(APIView):
     """
     API для добавления услуги мастеру.
-    
-    POST: добавление услуги мастеру
     """
     permission_classes = [IsMasterGroup]
     
@@ -788,34 +603,60 @@ class MasterServiceView(APIView):
         except Master.DoesNotExist:
             return None
     
-    @swagger_auto_schema(
-        operation_description="Добавить услугу мастеру",
-        request_body=openapi.Schema(
-            type=openapi.TYPE_OBJECT,
-            properties={
-                'master_id': openapi.Schema(type=openapi.TYPE_INTEGER, description='ID мастера'),
-                'master_items': openapi.Schema(
-                    type=openapi.TYPE_ARRAY,
-                    items=openapi.Schema(
-                        type=openapi.TYPE_OBJECT,
-                        properties={
-                            'name': openapi.Schema(type=openapi.TYPE_STRING, description='Название услуги'),
-                            'price_from': openapi.Schema(type=openapi.TYPE_NUMBER, description='Цена от'),
-                            'price_to': openapi.Schema(type=openapi.TYPE_NUMBER, description='Цена до'),
-                            'category': openapi.Schema(type=openapi.TYPE_INTEGER, description='ID категории')
+    @extend_schema(
+        summary="Добавить услугу мастеру",
+        description="""
+        Добавление услуги с элементами мастеру. Доступно только для пользователей с ролью 'Master'.
+        
+        **Формат запроса:**
+        ```json
+        {
+            "master_items": [
+                {
+                    "name": "Название услуги",
+                    "price_from": 100000,
+                    "price_to": 200000,
+                    "category": 1
+                },
+                {
+                    "name": "Другая услуга",
+                    "price_from": 50000,
+                    "price_to": 150000,
+                    "category": 2
+                }
+            ]
+        }
+        ```
+        
+        **Важно:** Поле `master_items` обязательно и должно быть массивом объектов!
+        """,
+        request=MasterServiceSerializer,
+        examples=[
+            OpenApiExample(
+                'Пример создания услуги мастера',
+                value={
+                    "master_items": [
+                        {
+                            "name": "Замена масла",
+                            "price_from": 150000,
+                            "price_to": 300000,
+                            "category": 1
                         },
-                        required=['name', 'price_from', 'price_to', 'category']
-                    ),
-                    description='Список элементов услуги'
-                )
-            },
-            required=['master_id', 'master_items']
-        ),
+                        {
+                            "name": "Диагностика двигателя",
+                            "price_from": 100000,
+                            "price_to": 250000,
+                            "category": 2
+                        }
+                    ]
+                }
+            )
+        ],
         responses={
-            201: openapi.Response(description="Услуга добавлена", schema=MasterServiceSerializer),
-            400: openapi.Response(description="Неверные данные"),
-            404: openapi.Response(description="Профиль мастера не найден"),
-            403: openapi.Response(description="Нет прав доступа")
+            201: MasterServiceSerializer,
+            400: {'type': 'object', 'properties': {'error': {'type': 'string'}}},
+            403: {'type': 'object', 'properties': {'detail': {'type': 'string'}}},
+            404: {'type': 'object', 'properties': {'error': {'type': 'string'}}}
         },
         tags=['Master Services']
     )
@@ -828,285 +669,154 @@ class MasterServiceView(APIView):
                 status=status.HTTP_404_NOT_FOUND
             )
         
-        master_id = request.data.get('master_id')
-        if not master_id:
-            return Response(
-                {'error': 'master_id обязателен'},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-        
-        # Проверяем, что master_id совпадает с текущим мастером
-        if master.id != master_id:
-            return Response(
-                {'error': 'Вы можете добавлять услуги только для своего профиля мастера'},
-                status=status.HTTP_403_FORBIDDEN
-            )
-        
         serializer = MasterServiceSerializer(data=request.data, context={'request': request})
         if serializer.is_valid():
-            serializer.save(master=master)
-            return Response(serializer.data, status=status.HTTP_201_CREATED)
+            service = serializer.save(master=master)
+            response_serializer = MasterServiceSerializer(service, context={'request': request})
+            return Response(response_serializer.data, status=status.HTTP_201_CREATED)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
-
-
-class MasterServicesByMasterView(APIView):
-    """
-    API для получения услуг мастера по master_id.
-    
-    GET: получение услуг мастера с элементами, сгруппированными по категориям
-    """
-    permission_classes = [IsAuthenticated]
-    
-    @swagger_auto_schema(
-        operation_description="Получить услуги мастера по ID мастера (с элементами, сгруппированными по категориям)",
-        responses={
-            200: openapi.Response(
-                description="Услуги мастера", 
-                schema=MasterServiceSerializer
-            ),
-            404: openapi.Response(description="Мастер не найден"),
-            403: openapi.Response(description="Нет прав доступа")
-        },
-        tags=['Master Services']
-    )
-    def get(self, request, master_id):
-        """Получение услуг мастера"""
-        try:
-            master = Master.objects.get(id=master_id)
-        except Master.DoesNotExist:
-            return Response(
-                {'error': 'Мастер не найден'},
-                status=status.HTTP_404_NOT_FOUND
-            )
-        
-        master_services = MasterService.objects.filter(master=master)
-        serializer = MasterServiceSerializer(master_services, many=True, context={'request': request})
-        return Response(serializer.data, status=status.HTTP_200_OK)
 
 
 class MasterServiceDetailView(APIView):
     """
     API для управления конкретной услугой мастера.
-    
-    Поддерживаемые операции:
-    - GET: получение услуги мастера
-    - PUT: обновление услуги мастера
-    - PATCH: частичное обновление услуги мастера
-    - DELETE: удаление услуги у мастера
     """
-    permission_classes = [IsMasterGroup]
-    
-    def get_master(self):
-        """Получить мастера текущего пользователя"""
-        try:
-            return Master.objects.get(user=self.request.user)
-        except Master.DoesNotExist:
-            return None
+    permission_classes = [IsAuthenticated]
     
     def get_object(self, service_id):
         """Получить услугу мастера"""
-        master = self.get_master()
-        if not master:
-            return None
         try:
-            return MasterService.objects.get(master=master, id=service_id)
+            service = MasterService.objects.get(id=service_id)
+            # Проверяем права доступа
+            if self.request.user.has_perm('apps.change_masterservice'):
+                return service
+            if service.master.user == self.request.user:
+                return service
+            return None
         except MasterService.DoesNotExist:
             return None
     
-    @swagger_auto_schema(
-        operation_description="Получить услугу мастера по ID",
+    @extend_schema(
+        summary="Получить услугу мастера по ID",
         responses={
-            200: openapi.Response(description="Услуга мастера", schema=MasterServiceSerializer),
-            404: openapi.Response(description="Услуга не найдена"),
-            403: openapi.Response(description="Нет прав доступа")
+            200: MasterServiceSerializer,
+            404: {'type': 'object', 'properties': {'error': {'type': 'string'}}},
+            403: {'type': 'object', 'properties': {'detail': {'type': 'string'}}}
         },
         tags=['Master Services']
     )
     def get(self, request, service_id):
         """Получение услуги мастера"""
-        master_service = self.get_object(service_id)
-        if not master_service:
+        service = self.get_object(service_id)
+        if not service:
             return Response(
                 {'error': 'Услуга не найдена'}, 
                 status=status.HTTP_404_NOT_FOUND
             )
         
-        serializer = MasterServiceSerializer(master_service, context={'request': request})
+        serializer = MasterServiceSerializer(service, context={'request': request})
         return Response(serializer.data, status=status.HTTP_200_OK)
     
-    @swagger_auto_schema(
-        operation_description="Обновить услугу мастера",
-        request_body=MasterServiceSerializer,
+    @extend_schema(
+        summary="Обновить услугу мастера",
+        request=MasterServiceSerializer,
         responses={
-            200: openapi.Response(description="Услуга обновлена", schema=MasterServiceSerializer),
-            400: openapi.Response(description="Неверные данные"),
-            404: openapi.Response(description="Услуга не найдена"),
-            403: openapi.Response(description="Нет прав доступа")
+            200: MasterServiceSerializer,
+            400: {'type': 'object', 'properties': {'detail': {'type': 'string'}}},
+            404: {'type': 'object', 'properties': {'error': {'type': 'string'}}},
+            403: {'type': 'object', 'properties': {'detail': {'type': 'string'}}}
         },
         tags=['Master Services']
     )
     def put(self, request, service_id):
         """Обновление услуги мастера"""
-        master_service = self.get_object(service_id)
-        if not master_service:
+        service = self.get_object(service_id)
+        if not service:
             return Response(
                 {'error': 'Услуга не найдена'}, 
                 status=status.HTTP_404_NOT_FOUND
             )
         
-        serializer = MasterServiceSerializer(master_service, data=request.data, context={'request': request})
+        serializer = MasterServiceSerializer(service, data=request.data, context={'request': request})
         if serializer.is_valid():
             serializer.save()
             return Response(serializer.data, status=status.HTTP_200_OK)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
     
-    @swagger_auto_schema(
-        operation_description="Частичное обновление услуги мастера",
-        request_body=MasterServiceSerializer,
+    @extend_schema(
+        summary="Удалить услугу мастера",
         responses={
-            200: openapi.Response(description="Услуга обновлена", schema=MasterServiceSerializer),
-            400: openapi.Response(description="Неверные данные"),
-            404: openapi.Response(description="Услуга не найдена"),
-            403: openapi.Response(description="Нет прав доступа")
-        },
-        tags=['Master Services']
-    )
-    def patch(self, request, service_id):
-        """Частичное обновление услуги мастера"""
-        master_service = self.get_object(service_id)
-        if not master_service:
-            return Response(
-                {'error': 'Услуга не найдена'}, 
-                status=status.HTTP_404_NOT_FOUND
-            )
-        
-        serializer = MasterServiceSerializer(master_service, data=request.data, partial=True, context={'request': request})
-        if serializer.is_valid():
-            serializer.save()
-            return Response(serializer.data, status=status.HTTP_200_OK)
-        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
-    
-    @swagger_auto_schema(
-        operation_description="Удалить услугу у мастера",
-        responses={
-            204: openapi.Response(description="Услуга удалена"),
-            404: openapi.Response(description="Услуга не найдена"),
-            403: openapi.Response(description="Нет прав доступа")
+            204: {'description': 'Услуга удалена'},
+            404: {'type': 'object', 'properties': {'error': {'type': 'string'}}},
+            403: {'type': 'object', 'properties': {'detail': {'type': 'string'}}}
         },
         tags=['Master Services']
     )
     def delete(self, request, service_id):
-        """Удаление услуги у мастера"""
-        master_service = self.get_object(service_id)
-        if not master_service:
+        """Удаление услуги мастера"""
+        service = self.get_object(service_id)
+        if not service:
             return Response(
                 {'error': 'Услуга не найдена'}, 
                 status=status.HTTP_404_NOT_FOUND
             )
         
-        master_service.delete()
+        service.delete()
         return Response(status=status.HTTP_204_NO_CONTENT)
 
 
 class MasterServiceItemsView(APIView):
     """
     API для добавления элементов услуги мастера.
-    
-    POST: добавление элементов услуги (multiple)
     """
     permission_classes = [IsMasterGroup]
     
-    @swagger_auto_schema(
-        operation_description="Добавить элементы услуги мастера",
-        request_body=openapi.Schema(
-            type=openapi.TYPE_OBJECT,
-            properties={
-                'master_items': openapi.Schema(
-                    type=openapi.TYPE_ARRAY,
-                    items=openapi.Schema(
-                        type=openapi.TYPE_OBJECT,
-                        properties={
-                            'name': openapi.Schema(type=openapi.TYPE_STRING),
-                            'price_from': openapi.Schema(type=openapi.TYPE_NUMBER),
-                            'price_to': openapi.Schema(type=openapi.TYPE_NUMBER),
-                            'category': openapi.Schema(type=openapi.TYPE_INTEGER)
-                        }
-                    )
-                )
-            }
-        ),
+    @extend_schema(
+        summary="Добавить элементы услуги мастера",
+        description="Добавить элементы услуги мастера",
+        request=MasterServiceItemsSerializer(many=True),
         responses={
-            201: openapi.Response(description="Элементы добавлены"),
-            400: openapi.Response(description="Неверные данные"),
-            404: openapi.Response(description="Услуга не найдена"),
-            403: openapi.Response(description="Нет прав доступа")
+            201: MasterServiceItemsSerializer(many=True),
+            400: {'type': 'object', 'properties': {'detail': {'type': 'string'}}},
+            403: {'type': 'object', 'properties': {'detail': {'type': 'string'}}}
         },
         tags=['Master Service Items']
     )
-    def post(self, request, master_service_id):
+    def post(self, request):
         """Добавление элементов услуги мастера"""
-        try:
-            master_service = MasterService.objects.get(id=master_service_id)
-            # Проверяем, что услуга принадлежит текущему пользователю
-            if master_service.master.user != request.user:
-                return Response(
-                    {'error': 'У вас нет доступа к этой услуге'},
-                    status=status.HTTP_403_FORBIDDEN
-                )
-        except MasterService.DoesNotExist:
-            return Response(
-                {'error': 'Услуга не найдена'},
-                status=status.HTTP_404_NOT_FOUND
-            )
-        
-        master_items = request.data.get('master_items', [])
-        if not isinstance(master_items, list):
-            return Response(
-                {'error': 'master_items должен быть списком'},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-        
-        created_items = []
-        for item_data in master_items:
-            serializer = MasterServiceItemsSerializer(data=item_data, context={'request': request})
-            if serializer.is_valid():
-                item = serializer.save(master_service=master_service)
-                created_items.append(serializer.data)
-            else:
-                return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
-        
-        return Response(created_items, status=status.HTTP_201_CREATED)
+        serializer = MasterServiceItemsSerializer(data=request.data, many=True, context={'request': request})
+        if serializer.is_valid():
+            items = serializer.save()
+            response_serializer = MasterServiceItemsSerializer(items, many=True, context={'request': request})
+            return Response(response_serializer.data, status=status.HTTP_201_CREATED)
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
 
 class MasterServiceItemsDetailView(APIView):
     """
     API для управления конкретным элементом услуги мастера.
-    
-    Поддерживаемые операции:
-    - GET: получение элемента услуги
-    - PUT: обновление элемента услуги
-    - PATCH: частичное обновление элемента услуги
-    - DELETE: удаление элемента услуги
     """
-    permission_classes = [IsMasterGroup]
+    permission_classes = [IsAuthenticated]
     
     def get_object(self, item_id):
         """Получить элемент услуги мастера"""
         try:
             item = MasterServiceItems.objects.get(id=item_id)
-            # Проверяем, что элемент принадлежит текущему пользователю
-            if item.master_service.master.user != self.request.user:
-                return None
-            return item
+            # Проверяем права доступа
+            if self.request.user.has_perm('apps.change_masterserviceitems'):
+                return item
+            if item.master_service.master.user == self.request.user:
+                return item
+            return None
         except MasterServiceItems.DoesNotExist:
             return None
     
-    @swagger_auto_schema(
-        operation_description="Получить элемент услуги мастера по ID",
+    @extend_schema(
+        summary="Получить элемент услуги мастера по ID",
         responses={
-            200: openapi.Response(description="Элемент услуги", schema=MasterServiceItemsSerializer),
-            404: openapi.Response(description="Элемент не найден"),
-            403: openapi.Response(description="Нет прав доступа")
+            200: MasterServiceItemsSerializer,
+            404: {'type': 'object', 'properties': {'error': {'type': 'string'}}},
+            403: {'type': 'object', 'properties': {'detail': {'type': 'string'}}}
         },
         tags=['Master Service Items']
     )
@@ -1115,21 +825,21 @@ class MasterServiceItemsDetailView(APIView):
         item = self.get_object(item_id)
         if not item:
             return Response(
-                {'error': 'Элемент не найден'},
+                {'error': 'Элемент не найден'}, 
                 status=status.HTTP_404_NOT_FOUND
             )
         
         serializer = MasterServiceItemsSerializer(item, context={'request': request})
         return Response(serializer.data, status=status.HTTP_200_OK)
     
-    @swagger_auto_schema(
-        operation_description="Обновить элемент услуги мастера",
-        request_body=MasterServiceItemsSerializer,
+    @extend_schema(
+        summary="Обновить элемент услуги мастера",
+        request=MasterServiceItemsSerializer,
         responses={
-            200: openapi.Response(description="Элемент обновлен", schema=MasterServiceItemsSerializer),
-            400: openapi.Response(description="Неверные данные"),
-            404: openapi.Response(description="Элемент не найден"),
-            403: openapi.Response(description="Нет прав доступа")
+            200: MasterServiceItemsSerializer,
+            400: {'type': 'object', 'properties': {'detail': {'type': 'string'}}},
+            404: {'type': 'object', 'properties': {'error': {'type': 'string'}}},
+            403: {'type': 'object', 'properties': {'detail': {'type': 'string'}}}
         },
         tags=['Master Service Items']
     )
@@ -1138,7 +848,7 @@ class MasterServiceItemsDetailView(APIView):
         item = self.get_object(item_id)
         if not item:
             return Response(
-                {'error': 'Элемент не найден'},
+                {'error': 'Элемент не найден'}, 
                 status=status.HTTP_404_NOT_FOUND
             )
         
@@ -1148,38 +858,12 @@ class MasterServiceItemsDetailView(APIView):
             return Response(serializer.data, status=status.HTTP_200_OK)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
     
-    @swagger_auto_schema(
-        operation_description="Частичное обновление элемента услуги мастера",
-        request_body=MasterServiceItemsSerializer,
+    @extend_schema(
+        summary="Удалить элемент услуги мастера",
         responses={
-            200: openapi.Response(description="Элемент обновлен", schema=MasterServiceItemsSerializer),
-            400: openapi.Response(description="Неверные данные"),
-            404: openapi.Response(description="Элемент не найден"),
-            403: openapi.Response(description="Нет прав доступа")
-        },
-        tags=['Master Service Items']
-    )
-    def patch(self, request, item_id):
-        """Частичное обновление элемента услуги мастера"""
-        item = self.get_object(item_id)
-        if not item:
-            return Response(
-                {'error': 'Элемент не найден'},
-                status=status.HTTP_404_NOT_FOUND
-            )
-        
-        serializer = MasterServiceItemsSerializer(item, data=request.data, partial=True, context={'request': request})
-        if serializer.is_valid():
-            serializer.save()
-            return Response(serializer.data, status=status.HTTP_200_OK)
-        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
-    
-    @swagger_auto_schema(
-        operation_description="Удалить элемент услуги мастера",
-        responses={
-            204: openapi.Response(description="Элемент удален"),
-            404: openapi.Response(description="Элемент не найден"),
-            403: openapi.Response(description="Нет прав доступа")
+            204: {'description': 'Элемент удален'},
+            404: {'type': 'object', 'properties': {'error': {'type': 'string'}}},
+            403: {'type': 'object', 'properties': {'detail': {'type': 'string'}}}
         },
         tags=['Master Service Items']
     )
@@ -1188,7 +872,7 @@ class MasterServiceItemsDetailView(APIView):
         item = self.get_object(item_id)
         if not item:
             return Response(
-                {'error': 'Элемент не найден'},
+                {'error': 'Элемент не найден'}, 
                 status=status.HTTP_404_NOT_FOUND
             )
         
@@ -1196,319 +880,534 @@ class MasterServiceItemsDetailView(APIView):
         return Response(status=status.HTTP_204_NO_CONTENT)
 
 
-class MasterInMasterView(APIView):
+class MasterServicesByMasterView(APIView):
     """
-    API для добавления мастера в мастера.
-    
-    POST: создание нового пользователя и добавление его в мастера
+    API для получения услуг мастера по master_id.
     """
-    permission_classes = [IsMasterGroup]
+    permission_classes = [AllowAny]
     
-    @swagger_auto_schema(
-        operation_description="Добавить мастера в мастера (создает нового пользователя)",
-        request_body=openapi.Schema(
-            type=openapi.TYPE_OBJECT,
-            properties={
-                'master': openapi.Schema(type=openapi.TYPE_INTEGER, description='ID мастера'),
-                'category': openapi.Schema(type=openapi.TYPE_INTEGER, description='ID категории'),
-                'first_name': openapi.Schema(type=openapi.TYPE_STRING, description='Имя'),
-                'last_name': openapi.Schema(type=openapi.TYPE_STRING, description='Фамилия'),
-                'phone': openapi.Schema(type=openapi.TYPE_STRING, description='Телефон'),
-                'email': openapi.Schema(type=openapi.TYPE_STRING, description='Email'),
-                'description': openapi.Schema(type=openapi.TYPE_STRING, description='Описание')
-                
-            },
-            required=['master', 'category', 'first_name', 'last_name', 'phone', 'email']
-        ),
+    @extend_schema(
+        summary="Получить услуги мастера по ID",
+        description="Получить услуги мастера по ID мастера. Доступно для всех пользователей (публичный доступ).",
         responses={
-            201: openapi.Response(description="Мастер добавлен", schema=MasterInMasterSerializer),
-            400: openapi.Response(description="Неверные данные"),
-            404: openapi.Response(description="Мастер или категория не найдены"),
-            403: openapi.Response(description="Нет прав доступа")
+            200: MasterServiceSerializer(many=True),
+            404: {'type': 'object', 'properties': {'error': {'type': 'string'}}}
         },
-        tags=['Master In Master']
+        tags=['Master Services']
     )
-    def post(self, request):
-        """Добавление мастера в мастера с созданием нового пользователя"""
-        from django.contrib.auth import get_user_model
-        from django.contrib.auth.models import Group
-        from apps.categories.models import Category
-        import secrets
-        import string
-        
-        User = get_user_model()
-        
-        # Получаем данные
-        master_id = request.data.get('master')
-        category_id = request.data.get('category')
-        first_name = request.data.get('first_name')
-        last_name = request.data.get('last_name')
-        description = request.data.get('description')
-        phone = request.data.get('phone')
-        email = request.data.get('email')
-        
-        # Валидация обязательных полей
-        if not all([master_id, category_id, first_name, last_name, phone, email]):
-            return Response(
-                {'error': 'Все поля обязательны: master, category, first_name, last_name, phone, email'},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-        
-        # Проверяем, что мастер существует
+    def get(self, request, master_id):
+        """Получение услуг мастера"""
         try:
             master = Master.objects.get(id=master_id)
+            services = MasterService.objects.filter(master=master)
+            serializer = MasterServiceSerializer(services, many=True, context={'request': request})
+            return Response(serializer.data, status=status.HTTP_200_OK)
         except Master.DoesNotExist:
             return Response(
-                {'error': 'Мастер не найден'},
+                {'error': 'Мастер не найден'}, 
                 status=status.HTTP_404_NOT_FOUND
             )
-        
-        # Проверяем, что категория существует
-        try:
-            category = Category.objects.get(id=category_id)
-        except Category.DoesNotExist:
-            return Response(
-                {'error': 'Категория не найдена'},
-                status=status.HTTP_404_NOT_FOUND
-            )
-        
-        # Проверяем, что email уникален
-        if User.objects.filter(email=email).exists():
-            return Response(
-                {'error': 'Пользователь с таким email уже существует'},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-        
-        # Проверяем, что phone уникален
-        if User.objects.filter(phone_number=phone).exists():
-            return Response(
-                {'error': 'Пользователь с таким телефоном уже существует'},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-        
-        # Генерируем уникальный username
-        username = email.split('@')[0]
-        base_username = username
-        counter = 1
-        while User.objects.filter(username=username).exists():
-            username = f"{base_username}{counter}"
-            counter += 1
-        
-        # Генерируем случайный пароль
-        password = ''.join(secrets.choice(string.ascii_letters + string.digits) for _ in range(12))
-        
-        # Создаем пользователя
-        masterinmaster_user = User.objects.create_user(
-            username=username,
-            email=email,
-            password=password,
-            first_name=first_name,
-            last_name=last_name,
-            phone_number=phone,
-            description=description
-        )
-        
-        # Добавляем в группу MasterInMaster
-        try:
-            master_in_master_group = Group.objects.get(name='MasterInMaster')
-            masterinmaster_user.groups.add(master_in_master_group)
-        except Group.DoesNotExist:
-            # Если группа не существует, создаем её
-            master_in_master_group = Group.objects.create(name='MasterInMaster')
-            masterinmaster_user.groups.add(master_in_master_group)
-        
-        # Проверяем, что связь не существует
-        if MasterInMaster.objects.filter(master=master, masterinmaster=masterinmaster_user).exists():
-            return Response(
-                {'error': 'Мастер уже добавлен'},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-        
-        # Создаем MasterInMaster
-        master_in_master = MasterInMaster.objects.create(
-            master=master,
-            masterinmaster=masterinmaster_user,
-            category=category
-        )
-        
-        serializer = MasterInMasterSerializer(master_in_master, context={'request': request})
-        return Response(serializer.data, status=status.HTTP_201_CREATED)
 
 
-class MasterInMasterByMasterView(APIView):
+class MasterEmployeeView(APIView):
     """
-    API для получения списка мастеров в мастере по master_id.
-    
-    GET: получение списка мастеров в мастере для конкретного мастера
+    API для управления сотрудниками мастерской
+    GET - поиск пользователя по private_id
+    POST - добавление сотрудника к мастерской
     """
     permission_classes = [IsAuthenticated]
     
-    @swagger_auto_schema(
-        operation_description="Получить список мастеров в мастере по ID мастера",
+    @extend_schema(
+        summary="Поиск пользователя по private_id",
+        description="Поиск пользователя по его уникальному private_id. Возвращает полную информацию о пользователе.",
+        parameters=[
+            OpenApiParameter(
+                name='private_id',
+                description='Уникальный 6-значный ID пользователя',
+                required=True,
+                type=str,
+                location=OpenApiParameter.QUERY
+            )
+        ],
         responses={
-            200: openapi.Response(
-                description="Список мастеров в мастере", 
-                schema=MasterInMasterSerializer
+            200: {
+                'type': 'object',
+                'properties': {
+                    'success': {'type': 'boolean', 'example': True},
+                    'user': {
+                        'type': 'object',
+                        'properties': {
+                            'id': {'type': 'integer'},
+                            'private_id': {'type': 'string'},
+                            'full_name': {'type': 'string'},
+                            'phone_number': {'type': 'string'},
+                            'email': {'type': 'string'},
+                            'avatar': {'type': 'string'},
+                            'description': {'type': 'string'}
+                        }
+                    }
+                }
+            },
+            404: {'type': 'object', 'properties': {'error': {'type': 'string'}}}
+        },
+        tags=['Add Master to Owner Master']
+    )
+    def get(self, request):
+        """Поиск пользователя по private_id"""
+        private_id = request.query_params.get('private_id')
+        
+        if not private_id:
+            return Response(
+                {'error': 'private_id обязателен'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        try:
+            user = User.objects.get(private_id=private_id)
+            return Response({
+                'success': True,
+                'user': {
+                    'id': user.id,
+                    'private_id': user.private_id,
+                    'full_name': user.get_full_name(),
+                    'phone_number': user.phone_number,
+                    'email': user.email,
+                    'avatar': user.avatar.url if user.avatar else None,
+                    'description': user.description
+                }
+            }, status=status.HTTP_200_OK)
+        except User.DoesNotExist:
+            return Response(
+                {'error': 'Пользователь не найден'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+    
+    @extend_schema(
+        summary="Добавить сотрудника к мастерской",
+        description="""
+        Добавление сотрудника к мастерской. 
+        
+        **Важно:** 
+        - Владелец мастерской добавляется автоматически при создании.
+        - Один пользователь может быть сотрудником только одной мастерской.
+        - Если пользователь уже работает в другой мастерской, вернется ошибка.
+        """,
+        request=MasterEmployeeCreateSerializer,
+        examples=[
+            OpenApiExample(
+                'Пример добавления сотрудника',
+                value={
+                    "master_id": 1,
+                    "user_id": 5
+                },
+                request_only=True
+            )
+        ],
+        responses={
+            201: {
+                'type': 'object',
+                'properties': {
+                    'success': {'type': 'boolean', 'example': True},
+                    'message': {'type': 'string', 'example': 'Сотрудник успешно добавлен'}
+                }
+            },
+            400: {
+                'type': 'object',
+                'properties': {
+                    'success': {'type': 'boolean', 'example': False},
+                    'error': {'type': 'string', 'example': 'Этот пользователь уже является сотрудником мастерской "Иван Иванов". Один пользователь может работать только в одной мастерской.'},
+                    'errors': {'type': 'object', 'description': 'Ошибки валидации полей'}
+                },
+                'description': 'Ошибка валидации или пользователь уже работает в другой мастерской'
+            }
+        },
+        tags=['Add Master to Owner Master']
+    )
+    def post(self, request):
+        """Добавление сотрудника к мастерской"""
+        serializer = MasterEmployeeCreateSerializer(data=request.data)
+        
+        if not serializer.is_valid():
+            return Response({
+                'success': False,
+                'errors': serializer.errors
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        # Получаем валидированные данные
+        master_id = serializer.validated_data['master_id']
+        user_id = serializer.validated_data['user_id']
+        
+        master = Master.objects.get(id=master_id)
+        user = User.objects.get(id=user_id)
+        
+        # Добавление сотрудника (validation уже прошел в serializer)
+        MasterEmployee.objects.create(master=master, employee=user)
+        
+        # Отправка уведомления сотруднику
+        try:
+            owner_name = master.user.get_full_name() or master.user.email
+            master_address = master.address or "мастерской"
+            
+            # Формируем сообщение
+            notification_message = f"🎉 Вас добавили в мастерскую!\n\n"
+            notification_message += f"👤 Владелец: {owner_name}\n"
+            notification_message += f"📍 Адрес: {master_address}\n"
+            notification_message += f"🏙 Город: {master.city}\n\n"
+            notification_message += f"✅ Вы теперь являетесь сотрудником этой мастерской."
+            
+            # Отправляем уведомление через Telegram (если есть chat_id)
+            if user.telegram_chat_id:
+                import requests
+                bot_token = SMSService.BOT_TOKEN
+                url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
+                
+                data = {
+                    'chat_id': user.telegram_chat_id,
+                    'text': notification_message,
+                    'parse_mode': 'HTML'
+                }
+                
+                try:
+                    response = requests.post(url, json=data, timeout=10)
+                    if response.status_code == 200:
+                        import logging
+                        logger = logging.getLogger(__name__)
+                        logger.info(f"Notification sent to user {user.id} via Telegram")
+                except Exception as telegram_error:
+                    import logging
+                    logger = logging.getLogger(__name__)
+                    logger.error(f"Error sending Telegram notification: {str(telegram_error)}")
+            
+            # Альтернативно отправляем на email если есть
+            elif user.email:
+                # Отправляем через email (можно добавить email service)
+                from django.core.mail import send_mail
+                from django.conf import settings
+                
+                try:
+                    send_mail(
+                        subject='Вас добавили в мастерскую',
+                        message=notification_message,
+                        from_email=settings.DEFAULT_FROM_EMAIL,
+                        recipient_list=[user.email],
+                        fail_silently=True
+                    )
+                except Exception as email_error:
+                    import logging
+                    logger = logging.getLogger(__name__)
+                    logger.error(f"Error sending email notification: {str(email_error)}")
+            
+            # Или через SMS
+            elif user.phone_number:
+                SMSService.send_telegram_sms(
+                    phone_number=user.phone_number,
+                    message=notification_message
+                )
+                
+        except Exception as e:
+            # Логируем ошибку, но не прерываем процесс
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.error(f"Error sending notification to employee {user.id}: {str(e)}")
+        
+        return Response({
+            'success': True,
+            'message': 'Сотрудник успешно добавлен'
+        }, status=status.HTTP_201_CREATED)
+
+
+class MasterFilterChoicesView(APIView):
+    """
+    API для получения всех доступных фильтров для мастеров
+    """
+    permission_classes = [AllowAny]
+    
+    @extend_schema(
+        summary="Получить варианты для фильтров мастеров",
+        description="""
+## Описание
+Возвращает все доступные варианты для фильтрации мастеров.
+
+## Что возвращается:
+- **services** - Список уникальных услуг из MasterServiceItems (distinct)
+- **locations** - Список уникальных городов где есть мастера
+
+Используется для построения фильтров в UI приложения.
+        """,
+        tags=['Masters'],
+        responses={
+            200: {
+                'description': 'Успешный ответ',
+                'content': {
+                    'application/json': {
+                        'example': {
+                            'services': ['Замена масла', 'Диагностика двигателя', 'Шиномонтаж'],
+                            'locations': ['Ташкент', 'Самарканд', 'Бухара']
+                        }
+                    }
+                }
+            }
+        }
+    )
+    def get(self, request):
+        """Получить варианты фильтров"""
+        
+        # Получаем уникальные услуги из MasterServiceItems
+        services = MasterServiceItems.objects.values_list('name', flat=True).distinct().order_by('name')
+        services_list = [service for service in services if service]  # Убираем пустые
+        
+        # Получаем уникальные города мастеров
+        locations = Master.objects.values_list('city', flat=True).distinct().order_by('city')
+        locations_list = [location for location in locations if location]  # Убираем пустые
+        
+        return Response({
+            'services': services_list,
+            'locations': locations_list
+        }, status=status.HTTP_200_OK)
+
+
+class MastersByUserView(APIView):
+    """
+    API для получения списка мастеров с фильтрацией
+    """
+    permission_classes = [AllowAny]
+    
+    @extend_schema(
+        summary="Получить список мастеров с фильтрацией",
+        description="""
+## Описание
+Возвращает список всех мастеров с возможностью фильтрации и сортировки.
+
+## Фильтры (все необязательные)
+
+### 1. Услуги (service_items)
+- **Multiple** - Массив названий услуг для фильтрации
+- Пример: `service_items=Замена масла&service_items=Диагностика`
+- Ищет мастеров у которых есть хотя бы одна из указанных услуг (OR)
+
+### 2. Категория (category)
+- **Multiple** - Массив ID категорий мастера (by_master)
+- Пример: `category=1&category=2`
+- Ищет мастеров с любой из указанных категорий (OR)
+
+### 3. Координаты (latitude, longitude)
+- Широта и долгота пользователя для поиска ближайших мастеров
+- Пример: `latitude=41.3111&longitude=69.2797`
+
+### 4. Город/Район (location)
+- **Multiple** - Массив городов/районов
+- Пример: `location=Ташкент&location=Самарканд`
+- Ищет мастеров в любом из указанных городов (OR)
+
+### 5. Наивысший рейтинг (highest_rating)
+- Только мастера с высоким рейтингом (4.5+)
+- Значение: true/false
+- Пример: `highest_rating=true`
+
+### 6. Круглосуточные (round_clock)
+- Мастерские работающие 24/7
+- Значение: true/false
+- Пример: `round_clock=true`
+
+## Сортировка (sort)
+- **best** (по умолчанию) - Лучшие мастерские (по рейтингу)
+- **distance** - По расстоянию (требуется latitude и longitude)
+- **newest** - Новые мастерские
+
+Пример: `sort=distance`
+
+## Примеры запросов
+
+**Базовый:**
+```
+GET /api/master/masters/by-user/
+```
+
+**С фильтром по услугам (multiple):**
+```
+GET /api/master/masters/by-user/?service_items=Замена масла&service_items=Диагностика
+```
+
+**С категориями (multiple):**
+```
+GET /api/master/masters/by-user/?category=1&category=2
+```
+
+**С городами (multiple):**
+```
+GET /api/master/masters/by-user/?location=Ташкент&location=Самарканд
+```
+
+**С координатами и сортировкой:**
+```
+GET /api/master/masters/by-user/?latitude=41.3111&longitude=69.2797&sort=distance
+```
+
+**Комбинированный фильтр:**
+```
+GET /api/master/masters/by-user/?service_items=Шиномонтаж&category=1&category=2&location=Ташкент&highest_rating=true&round_clock=true
+```
+        """,
+        tags=['Masters'],
+        parameters=[
+            OpenApiParameter(
+                name='service_items', 
+                type={'type': 'array', 'items': {'type': 'string'}}, 
+                location=OpenApiParameter.QUERY, 
+                description='Фильтр по услугам (multiple). Пример: service_items=Замена масла&service_items=Диагностика. Ищет по MasterServiceItems.name',
+                required=False,
+                explode=True,
+                style='form'
             ),
-            404: openapi.Response(description="Мастер не найден"),
-            403: openapi.Response(description="Нет прав доступа")
-        },
-        tags=['Master In Master']
-    )
-    def get(self, request, master_id):
-        """Получение списка мастеров в мастере"""
-        try:
-            master = Master.objects.get(id=master_id)
-        except Master.DoesNotExist:
-            return Response(
-                {'error': 'Мастер не найден'},
-                status=status.HTTP_404_NOT_FOUND
-            )
-        
-        master_in_masters = MasterInMaster.objects.filter(master=master).select_related('masterinmaster', 'category')
-        serializer = MasterInMasterSerializer(master_in_masters, many=True, context={'request': request})
-        return Response(serializer.data, status=status.HTTP_200_OK)
-
-
-class MasterInMasterDetailView(APIView):
-    """
-    API для управления конкретным мастером в мастере.
-    
-    Поддерживаемые операции:
-    - PUT/PATCH: обновление мастера в мастере (обновляет CustomUser)
-    - DELETE: удаление мастера из мастера
-    """
-    permission_classes = [IsMasterGroup]
-    
-    def get_object(self, master_in_master_id):
-        """Получить мастера в мастере"""
-        try:
-            return MasterInMaster.objects.get(id=master_in_master_id)
-        except MasterInMaster.DoesNotExist:
-            return None
-    
-    @swagger_auto_schema(
-        operation_description="Обновить мастера в мастере (обновляет данные пользователя)",
-        request_body=openapi.Schema(
-            type=openapi.TYPE_OBJECT,
-            properties={
-                'first_name': openapi.Schema(type=openapi.TYPE_STRING, description='Имя'),
-                'last_name': openapi.Schema(type=openapi.TYPE_STRING, description='Фамилия'),
-                'phone': openapi.Schema(type=openapi.TYPE_STRING, description='Телефон'),
-                'email': openapi.Schema(type=openapi.TYPE_STRING, description='Email'),
-                'category': openapi.Schema(type=openapi.TYPE_INTEGER, description='ID категории')
-            }
-        ),
+            OpenApiParameter(
+                name='category', 
+                type={'type': 'array', 'items': {'type': 'integer'}}, 
+                location=OpenApiParameter.QUERY, 
+                description='Фильтр по категориям (multiple ID). Пример: category=1&category=2',
+                required=False,
+                explode=True,
+                style='form'
+            ),
+            OpenApiParameter(name='latitude', type=OpenApiTypes.FLOAT, location=OpenApiParameter.QUERY, description='Широта пользователя для поиска ближайших', required=False),
+            OpenApiParameter(name='longitude', type=OpenApiTypes.FLOAT, location=OpenApiParameter.QUERY, description='Долгота пользователя', required=False),
+            OpenApiParameter(
+                name='location', 
+                type={'type': 'array', 'items': {'type': 'string'}}, 
+                location=OpenApiParameter.QUERY, 
+                description='Фильтр по городам/районам (multiple). Пример: location=Ташкент&location=Самарканд',
+                required=False,
+                explode=True,
+                style='form'
+            ),
+            OpenApiParameter(name='highest_rating', type=OpenApiTypes.BOOL, location=OpenApiParameter.QUERY, description='Только с высоким рейтингом (4.5+)', required=False),
+            OpenApiParameter(name='round_clock', type=OpenApiTypes.BOOL, location=OpenApiParameter.QUERY, description='Круглосуточные мастерские (24/7)', required=False),
+            OpenApiParameter(name='sort', type=OpenApiTypes.STR, location=OpenApiParameter.QUERY, description='Сортировка: best, distance, newest', required=False, enum=['best', 'distance', 'newest']),
+        ],
         responses={
-            200: openapi.Response(description="Мастер обновлен", schema=MasterInMasterSerializer),
-            400: openapi.Response(description="Неверные данные"),
-            404: openapi.Response(description="Мастер не найден"),
-            403: openapi.Response(description="Нет прав доступа")
-        },
-        tags=['Master In Master']
+            200: MasterSerializer(many=True),
+            400: {'type': 'object', 'properties': {'error': {'type': 'string'}}},
+        }
     )
-    def put(self, request, master_in_master_id):
-        """Обновление мастера в мастере"""
-        master_in_master = self.get_object(master_in_master_id)
-        if not master_in_master:
-            return Response(
-                {'error': 'Мастер не найден'},
-                status=status.HTTP_404_NOT_FOUND
-            )
+    def get(self, request):
+        """Получить список мастеров с фильтрацией"""
+        from math import radians, sin, cos, sqrt, atan2
+        from django.db.models import Avg, Q
         
-        from django.contrib.auth import get_user_model
-        from apps.categories.models import Category
-        User = get_user_model()
+        # Получаем всех мастеров
+        masters = Master.objects.all().select_related('user').prefetch_related('category', 'master_services__master_service_items')
         
-        # Обновляем данные пользователя
-        user = master_in_master.masterinmaster
-        first_name = request.data.get('first_name')
-        last_name = request.data.get('last_name')
-        phone = request.data.get('phone')
-        email = request.data.get('email')
-        category_id = request.data.get('category')
+        print(f"\n{'='*60}")
+        print(f"FILTER MASTERS BY USER")
+        print(f"Всего мастеров до фильтрации: {masters.count()}")
         
-        if first_name:
-            user.first_name = first_name
-        if last_name:
-            user.last_name = last_name
-        if phone:
-            # Проверяем уникальность телефона
-            if User.objects.filter(phone_number=phone).exclude(id=user.id).exists():
-                return Response(
-                    {'error': 'Пользователь с таким телефоном уже существует'},
-                    status=status.HTTP_400_BAD_REQUEST
-                )
-            user.phone_number = phone
-        if email:
-            # Проверяем уникальность email
-            if User.objects.filter(email=email).exclude(id=user.id).exists():
-                return Response(
-                    {'error': 'Пользователь с таким email уже существует'},
-                    status=status.HTTP_400_BAD_REQUEST
-                )
-            user.email = email
-            user.username = email.split('@')[0]  # Обновляем username
+        # Фильтр по услугам (service_items) - MULTIPLE
+        service_items = request.query_params.getlist('service_items')
+        print(f"service_items параметр: {service_items}")
+        if service_items:
+            # OR условие - мастер должен иметь хотя бы одну из указанных услуг
+            service_conditions = Q()
+            for service_item in service_items:
+                service_conditions |= Q(master_services__master_service_items__name__icontains=service_item)
+                print(f"  Добавлен фильтр по услуге: {service_item}")
+            masters = masters.filter(service_conditions).distinct()
+            print(f"Мастеров после фильтра service_items: {masters.count()}")
         
-        user.save()
-        
-        # Обновляем категорию если передана
-        if category_id:
+        # Фильтр по категориям - MULTIPLE
+        categories = request.query_params.getlist('category')
+        print(f"category параметр: {categories}")
+        if categories:
             try:
-                category = Category.objects.get(id=category_id)
-                master_in_master.category = category
-                master_in_master.save()
-            except Category.DoesNotExist:
-                return Response(
-                    {'error': 'Категория не найдена'},
-                    status=status.HTTP_404_NOT_FOUND
-                )
+                # Игнорируем 0 и пустые значения
+                category_ids = [int(cat_id) for cat_id in categories if cat_id and int(cat_id) > 0]
+                print(f"  category_ids после фильтрации: {category_ids}")
+                if category_ids:
+                    # OR условие - мастер может иметь любую из указанных категорий
+                    masters = masters.filter(category__id__in=category_ids).distinct()
+                    print(f"Мастеров после фильтра category: {masters.count()}")
+            except (ValueError, TypeError) as e:
+                print(f"  ОШИБКА при обработке category: {e}")
+                pass
         
-        serializer = MasterInMasterSerializer(master_in_master, context={'request': request})
-        return Response(serializer.data, status=status.HTTP_200_OK)
-    
-    @swagger_auto_schema(
-        operation_description="Частичное обновление мастера в мастере",
-        request_body=openapi.Schema(
-            type=openapi.TYPE_OBJECT,
-            properties={
-                'first_name': openapi.Schema(type=openapi.TYPE_STRING, description='Имя'),
-                'last_name': openapi.Schema(type=openapi.TYPE_STRING, description='Фамилия'),
-                'phone': openapi.Schema(type=openapi.TYPE_STRING, description='Телефон'),
-                'email': openapi.Schema(type=openapi.TYPE_STRING, description='Email'),
-                'category': openapi.Schema(type=openapi.TYPE_INTEGER, description='ID категории')
-            }
-        ),
-        responses={
-            200: openapi.Response(description="Мастер обновлен", schema=MasterInMasterSerializer),
-            400: openapi.Response(description="Неверные данные"),
-            404: openapi.Response(description="Мастер не найден"),
-            403: openapi.Response(description="Нет прав доступа")
-        },
-        tags=['Master In Master']
-    )
-    def patch(self, request, master_in_master_id):
-        """Частичное обновление мастера в мастере"""
-        return self.put(request, master_in_master_id)
-    
-    @swagger_auto_schema(
-        operation_description="Удалить мастера из мастера",
-        responses={
-            204: openapi.Response(description="Мастер удален"),
-            404: openapi.Response(description="Мастер не найден"),
-            403: openapi.Response(description="Нет прав доступа")
-        },
-        tags=['Master In Master']
-    )
-    def delete(self, request, master_in_master_id):
-        """Удаление мастера из мастера"""
-        master_in_master = self.get_object(master_in_master_id)
-        if not master_in_master:
-            return Response(
-                {'error': 'Мастер не найден'},
-                status=status.HTTP_404_NOT_FOUND
+        # Фильтр по городам/районам - MULTIPLE
+        locations = request.query_params.getlist('location')
+        print(f"location параметр: {locations}")
+        if locations:
+            # OR условие - мастер может быть в любом из указанных городов
+            location_conditions = Q()
+            for location in locations:
+                location_conditions |= Q(city__icontains=location) | Q(address__icontains=location)
+                print(f"  Добавлен фильтр по городу: {location}")
+            masters = masters.filter(location_conditions)
+            print(f"Мастеров после фильтра location: {masters.count()}")
+        
+        # Фильтр по наивысшему рейтингу (4.5+)
+        highest_rating = request.query_params.get('highest_rating', '').lower() == 'true'
+        if highest_rating:
+            # Аннотируем средний рейтинг
+            from apps.order.models import Rating
+            masters = masters.annotate(avg_rating=Avg('ratings__rating')).filter(avg_rating__gte=4.5)
+        
+        # Фильтр круглосуточные (предполагаем, что есть поле working_time)
+        round_clock = request.query_params.get('round_clock', '').lower() == 'true'
+        if round_clock:
+            # Ищем мастеров у которых в working_time есть "24" или "круглосуточно"
+            masters = masters.filter(
+                Q(working_time__icontains='24') | Q(working_time__icontains='круглосуточно')
             )
         
-        master_in_master.delete()
-        return Response(status=status.HTTP_204_NO_CONTENT)
-
+        # Координаты для расчета расстояния
+        user_lat = request.query_params.get('latitude')
+        user_long = request.query_params.get('longitude')
+        
+        # Сортировка
+        sort_param = request.query_params.get('sort', 'best')
+        
+        if sort_param == 'distance' and user_lat and user_long:
+            # Сортировка по расстоянию
+            try:
+                user_lat = float(user_lat)
+                user_long = float(user_long)
+                
+                # Вычисляем расстояние для каждого мастера
+                masters_with_distance = []
+                for master in masters:
+                    if master.latitude and master.longitude:
+                        # Haversine formula
+                        R = 6371.0
+                        lat1_rad = radians(user_lat)
+                        lon1_rad = radians(user_long)
+                        lat2_rad = radians(float(master.latitude))
+                        lon2_rad = radians(float(master.longitude))
+                        
+                        dlat = lat2_rad - lat1_rad
+                        dlon = lon2_rad - lon1_rad
+                        
+                        a = sin(dlat / 2)**2 + cos(lat1_rad) * cos(lat2_rad) * sin(dlon / 2)**2
+                        c = 2 * atan2(sqrt(a), sqrt(1 - a))
+                        distance = R * c
+                        
+                        master.distance = round(distance, 2)
+                        masters_with_distance.append(master)
+                
+                # Сортируем по расстоянию
+                masters_with_distance.sort(key=lambda x: x.distance)
+                masters = masters_with_distance
+                
+            except (ValueError, TypeError):
+                pass
+        
+        elif sort_param == 'newest':
+            # Сортировка по дате создания (новые сначала)
+            masters = masters.order_by('-created_at')
+        
+        else:
+            # По умолчанию: "best" - лучшие (по рейтингу)
+            from apps.order.models import Rating
+            masters = masters.annotate(avg_rating=Avg('ratings__rating')).order_by('-avg_rating', '-created_at')
+        
+        # Сериализуем
+        print(f"ИТОГО мастеров после всех фильтров: {masters.count() if hasattr(masters, 'count') else len(masters)}")
+        print(f"{'='*60}\n")
+        
+        serializer = MasterSerializer(masters, many=True, context={'request': request})
+        return Response(serializer.data, status=status.HTTP_200_OK)

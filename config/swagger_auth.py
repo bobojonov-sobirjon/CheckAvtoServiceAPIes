@@ -6,6 +6,8 @@ from rest_framework_simplejwt.tokens import RefreshToken
 from django.http import JsonResponse
 from django.views.decorators.csrf import csrf_exempt
 from django.utils.decorators import method_decorator
+from drf_spectacular.utils import extend_schema, OpenApiParameter, OpenApiExample
+from drf_spectacular.types import OpenApiTypes
 from apps.accounts.models import CustomUser
 from apps.accounts.services import SMSService
 
@@ -17,6 +19,41 @@ class SwaggerTokenView(APIView):
     """
     permission_classes = [AllowAny]
     
+    @extend_schema(
+        summary="OAuth2 Token Endpoint",
+        description="OAuth2 password flow for Swagger - email only authentication",
+        request={
+            'application/x-www-form-urlencoded': {
+                'type': 'object',
+                'properties': {
+                    'grant_type': {'type': 'string', 'example': 'password'},
+                    'username': {'type': 'string', 'format': 'email', 'example': 'user@example.com'},
+                    'password': {'type': 'string', 'example': 'password'},
+                },
+                'required': ['grant_type', 'username']
+            }
+        },
+        responses={
+            200: {
+                'type': 'object',
+                'properties': {
+                    'access_token': {'type': 'string'},
+                    'refresh_token': {'type': 'string'},
+                    'token_type': {'type': 'string', 'example': 'Bearer'},
+                    'expires_in': {'type': 'integer', 'example': 604800},
+                    'scope': {'type': 'string', 'example': 'read write'}
+                }
+            },
+            400: {
+                'type': 'object',
+                'properties': {
+                    'error': {'type': 'string'},
+                    'error_description': {'type': 'string'}
+                }
+            }
+        },
+        tags=['Authentication']
+    )
     def post(self, request):
         """OAuth2 password flow for Swagger - email only"""
         username = request.data.get('username')  # This will be the email

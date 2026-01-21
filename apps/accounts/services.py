@@ -25,6 +25,62 @@ User = get_user_model()
 class SMSService:
     """Класс для SMS сервисов"""
     
+    # Telegram Bot settings
+    BOT_TOKEN = '8067632862:AAHWoHxOQES59J609mf9W6bY7WGFrZSGrQw'
+    BOT_NAME = '@check_avto_app_bot'
+    
+    @staticmethod
+    def send_telegram_sms(phone_number: str, message: str) -> dict:
+        """
+        Отправка SMS через Telegram Bot
+        
+        Args:
+            phone_number (str): Номер телефона
+            message (str): Сообщение для отправки
+            
+        Returns:
+            dict: Результат отправки
+        """
+        try:
+            # Форматируем сообщение для Telegram
+            telegram_message = f"📱 SMS код для {phone_number}\n\n{message}"
+            
+            # URL для отправки сообщения в Telegram
+            url = f"https://api.telegram.org/bot{SMSService.BOT_TOKEN}/sendMessage"
+            
+            # Отправляем SMS через Telegram Bot
+            # Для простоты, отправляем админу или специальный канал
+            # В реальном проекте здесь должен быть канал для SMS уведомлений
+            admin_chat_id = "123456789"  # Замените на реальный admin chat_id или канал
+            
+            data = {
+                'chat_id': admin_chat_id,
+                'text': telegram_message,
+                'parse_mode': 'HTML'
+            }
+            
+            response = requests.post(url, json=data, timeout=10)
+            
+            if response.status_code == 200:
+                logger.info(f"Telegram message sent to bot: {message} for phone {phone_number}")
+                return {
+                    'success': True,
+                    'message': 'SMS отправлен через Telegram'
+                }
+            else:
+                logger.error(f"Failed to send Telegram message: {response.text}")
+                return {
+                    'success': False,
+                    'error': f'Ошибка отправки Telegram: {response.text}'
+                }
+                
+        except Exception as e:
+            logger.error(f"Error sending Telegram SMS: {str(e)}")
+            return {
+                'success': False,
+                'error': f'Ошибка отправки Telegram: {str(e)}'
+            }
+    
     @staticmethod
     def format_phone_number(phone_number: str) -> str:
         """
@@ -146,17 +202,17 @@ class SMSService:
         Args:
             identifier (str): Номер телефона или email
             identifier_type (str): Тип идентификатора ('phone' или 'email')
-            role (str): Роль пользователя ('Driver' или 'Master') - только для новых пользователей
+            role (str): Роль пользователя ('Driver', 'Master' или 'Owner') - только для новых пользователей
             
         Returns:
             dict: Результат
         """
         try:
             # Валидация роли
-            if role and role not in ['Driver', 'Master']:
+            if role and role not in ['Driver', 'Master', 'Owner']:
                 return {
                     'success': False,
-                    'error': 'Роль должна быть "Driver" или "Master"',
+                    'error': 'Неверная роль',
                     'status_code': status.HTTP_400_BAD_REQUEST
                 }
             
@@ -177,14 +233,36 @@ class SMSService:
             if identifier_type == 'phone':
                 phone_number = identifier
                 try:
-                    user = User.objects.get(phone_number=phone_number)
+                    user = User.objects.prefetch_related('groups').get(phone_number=phone_number)
                     user_exists = True
+                    
+                    # Проверяем соответствие роли пользователя
+                    if role:
+                        user_groups = user.groups.values_list('name', flat=True)
+                        if user_groups and role not in user_groups:
+                            user_roles_str = ', '.join(user_groups)
+                            return {
+                                'success': False,
+                                'error': f'Роль не совпадает. У пользователя роли: {user_roles_str}. Вы указали: {role}',
+                                'status_code': status.HTTP_400_BAD_REQUEST
+                            }
                 except User.DoesNotExist:
                     user_exists = False
             elif identifier_type == 'email':
                 try:
-                    user = User.objects.get(email=identifier)
+                    user = User.objects.prefetch_related('groups').get(email=identifier)
                     user_exists = True
+                    
+                    # Проверяем соответствие роли пользователя
+                    if role:
+                        user_groups = user.groups.values_list('name', flat=True)
+                        if user_groups and role not in user_groups:
+                            return {
+                                'success': False,
+                                'error': 'Неверная роль пользователя',
+                                'status_code': status.HTTP_400_BAD_REQUEST
+                            }
+                    
                     # Если пользователь найден по email, получаем его номер телефона
                     if user.phone_number:
                         phone_number = user.phone_number
@@ -218,58 +296,9 @@ class SMSService:
                         'status_code': status.HTTP_500_INTERNAL_SERVER_ERROR
                     }
             else:
-                # Отправка SMS на номер телефона
-                # Форматирование номера телефона
-                formatted_phone = SMSService.format_phone_number(phone_number)
-                logger.info(f"Original phone: {phone_number}, Formatted phone: {formatted_phone}")
-                
-                # Проверяем баланс перед отправкой SMS (временно отключено для тестирования)
-                if False:  # balance_info.get('success') and balance_info.get('balance', 0) >= 1.0:
-                    # Отправка SMS через SMSC.ru
-                    data = {
-                        'login': settings.SMSC_LOGIN,
-                        'psw': settings.SMSC_PASSWORD,
-                        'phones': formatted_phone,
-                        'mes': f'Ваш код подтверждения: {sms_code}',
-                        'sender': 'SMSC.RU',  # Tasdiqlangan sender ID
-                        'fmt': 3  # JSON формат
-                    }
-                    
-                    logger.info(f"Sending SMS to {formatted_phone} with data: {data}")
-                    
-                    response = requests.get(settings.SMSC_API_URL, params=data, timeout=10)
-                    logger.info(f"SMSC.ru response status: {response.status_code}")
-                    logger.info(f"SMSC.ru response text: {response.text}")
-                    
-                    result = response.json()
-                    logger.info(f"SMSC.ru response JSON: {result}")
-                    
-                    if result.get('error'):
-                        error_msg = result.get('error')
-                        logger.error(f"SMSC.ru error: {error_msg}")
-                        
-                        # Специальная обработка для разных типов ошибок
-                        if 'denied' in error_msg.lower():
-                            return {
-                                'success': False,
-                                'error': f'Ошибка отправки SMS: Сообщение отклонено. Возможно, номер заблокирован или аккаунт не имеет прав для отправки на данный номер. Ошибка: {error_msg}',
-                                'status_code': status.HTTP_400_BAD_REQUEST
-                            }
-                        elif 'balance' in error_msg.lower() or 'money' in error_msg.lower():
-                            return {
-                                'success': False,
-                                'error': f'Ошибка отправки SMS: Недостаточно средств на балансе SMSC.ru. Ошибка: {error_msg}',
-                                'status_code': status.HTTP_400_BAD_REQUEST
-                            }
-                        else:
-                            return {
-                                'success': False,
-                                'error': f'Ошибка отправки SMS: {error_msg}',
-                                'status_code': status.HTTP_400_BAD_REQUEST
-                            }
-                else:
-                    # В тестовом режиме просто логируем
-                    logger.info(f"Test mode: SMS code {sms_code} would be sent to {formatted_phone}")
+                # Временно отключаем Telegram SMS
+                # Просто логируем код
+                logger.info(f"SMS code for {phone_number}: {sms_code}")
             
             # Mark old codes for this identifier as used
             UserSMSCode.objects.filter(
@@ -316,7 +345,7 @@ class SMSService:
             if identifier_type == 'email':
                 message = 'Код подтверждения отправлен на email'
             else:
-                message = 'SMS код отправлен'
+                message = 'SMS код сгенерирован'
             
             return {
                 'success': True,
@@ -325,6 +354,7 @@ class SMSService:
                 'identifier_type': identifier_type,
                 'phone': phone_number if identifier_type == 'phone' else None,
                 'email': identifier if identifier_type == 'email' else None,
+                'sms_code': sms_code,  # Добавляем код для всех типов
                 'user_exists': user_exists,
                 'status_code': status.HTTP_200_OK
             }
@@ -364,10 +394,10 @@ class SMSService:
         """
         try:
             # Валидация роли
-            if role and role not in ['Driver', 'Master']:
+            if role and role not in ['Driver', 'Master', 'Owner']:
                 return {
                     'success': False,
-                    'error': 'Роль должна быть "Driver" или "Master"',
+                    'error': 'Неверная роль',
                     'status_code': status.HTTP_400_BAD_REQUEST
                 }
             
@@ -388,7 +418,7 @@ class SMSService:
                     if not stored_code or stored_code != sms_code:
                         return {
                             'success': False,
-                            'error': 'Срок действия SMS кода истек или код не найден',
+                            'error': 'Неверный SMS код',
                             'status_code': status.HTTP_400_BAD_REQUEST
                         }
                 else:
@@ -438,16 +468,27 @@ class SMSService:
                         user = User.objects.prefetch_related('groups').get(email=identifier)
                     created = False
                     
-                    # Если пользователь существует и указана новая роль, добавляем её
+                    # Проверяем соответствие роли пользователя
                     if role:
-                        try:
-                            group = Group.objects.get(name=role)
-                            # Проверяем, есть ли уже эта роль у пользователя
-                            if not user.groups.filter(name=role).exists():
+                        user_groups = user.groups.values_list('name', flat=True)
+                        
+                        # Если у пользователя есть роли, проверяем соответствие
+                        if user_groups:
+                            # Если указанная роль не совпадает ни с одной из ролей пользователя
+                            if role not in user_groups:
+                                return {
+                                    'success': False,
+                                    'error': 'Неверная роль пользователя',
+                                    'status_code': status.HTTP_400_BAD_REQUEST
+                                }
+                        else:
+                            # Если у пользователя нет ролей, добавляем указанную роль
+                            try:
+                                group = Group.objects.get(name=role)
                                 user.groups.add(group)
                                 logger.info(f"Added role {role} to existing user {user.email}")
-                        except Group.DoesNotExist:
-                            logger.warning(f"Group {role} not found, skipping role assignment")
+                            except Group.DoesNotExist:
+                                logger.warning(f"Group {role} not found, skipping role assignment")
                 except User.DoesNotExist:
                     # Если пользователь не найден, создать нового
                     if identifier_type == 'phone':

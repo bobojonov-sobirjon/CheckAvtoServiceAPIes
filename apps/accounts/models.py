@@ -1,6 +1,7 @@
 from django.contrib.auth.models import AbstractUser
 from django.db import models
 from decimal import Decimal
+import random
 
 
 class CustomUser(AbstractUser):
@@ -18,6 +19,21 @@ class CustomUser(AbstractUser):
         null=True,
         verbose_name="Номер телефона",
         help_text="Необязательно. Введите ваш номер телефона."
+    )
+    telegram_chat_id = models.CharField(
+        max_length=50,
+        blank=True,
+        null=True,
+        verbose_name="Telegram Chat ID",
+        help_text="Необязательно. Введите ваш Telegram Chat ID для получения SMS."
+    )
+    private_id = models.CharField(
+        max_length=6,
+        unique=True,
+        blank=True,
+        null=True,
+        verbose_name="Private ID",
+        help_text="Уникальный 6-значный идентификатор пользователя. Генерируется автоматически."
     )
     description = models.TextField(
         blank=True,
@@ -85,6 +101,22 @@ class CustomUser(AbstractUser):
 
     def __str__(self):
         return f"{self.email} ({self.get_full_name()})"
+    
+    def _generate_unique_private_id(self):
+        """Генерация уникального 6-значного private_id"""
+        while True:
+            # Генерируем случайное 6-значное число
+            private_id = str(random.randint(100000, 999999))
+            
+            # Проверяем, что такой ID еще не существует
+            if not CustomUser.objects.filter(private_id=private_id).exists():
+                return private_id
+    
+    def save(self, *args, **kwargs):
+        """Override save для автоматической генерации private_id"""
+        if not self.private_id:
+            self.private_id = self._generate_unique_private_id()
+        super().save(*args, **kwargs)
 
     def get_full_name(self):
         """
@@ -138,7 +170,7 @@ class UserBalance(models.Model):
 
     class Meta:
         verbose_name = "Баланс пользователя"
-        verbose_name_plural = "Балансы пользователей"
+        verbose_name_plural = "04. Балансы пользователей"
         ordering = ['-updated_at']
 
     def __str__(self):
@@ -258,6 +290,36 @@ class UserSMSCode(models.Model):
         self.save(update_fields=['is_used', 'used_at'])
 
 
+class MasterCustomUser(CustomUser):
+    """
+    Proxy model для мастеров
+    """
+    class Meta:
+        proxy = True
+        verbose_name = "Мастер"
+        verbose_name_plural = "03. Мастера"
+
+
+class CarOwner(CustomUser):
+    """
+    Proxy model для автовладельцев
+    """
+    class Meta:
+        proxy = True
+        verbose_name = "Автовладелец"
+        verbose_name_plural = "01. Автовладельцы"
+
+
+class Owner(CustomUser):
+    """
+    Proxy model для владельцев
+    """
+    class Meta:
+        proxy = True
+        verbose_name = "Владелец"
+        verbose_name_plural = "02. Владельцы"
+
+
 class FAQ(models.Model):
     """
     FAQ (Frequently Asked Questions) model
@@ -291,7 +353,7 @@ class FAQ(models.Model):
 
     class Meta:
         verbose_name = "FAQ"
-        verbose_name_plural = "FAQ"
+        verbose_name_plural = "05. FAQ"
         ordering = ['order', '-created_at']
 
     def __str__(self):

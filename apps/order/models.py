@@ -88,8 +88,12 @@ class Order(models.Model):
         related_name='orders',
         verbose_name='Мастер'
     )
-    master_in_master = models.ManyToManyField(
-        CustomUser, related_name='orders_master_in_master', verbose_name='Мастер в мастере', blank=True
+    masters = models.ManyToManyField(
+        User,
+        related_name='assigned_orders',
+        blank=True,
+        verbose_name='Мастера (пользователи)',
+        help_text='Список пользователей-мастеров, назначенных на этот заказ'
     )
     created_at = models.DateTimeField(
         auto_now_add=True,
@@ -170,14 +174,6 @@ class Rating(models.Model):
         blank=True,
         verbose_name='Мастер'
     )
-    master_in_master = models.ForeignKey(
-        User,
-        on_delete=models.CASCADE,
-        related_name='ratings_as_master_in_master',
-        null=True,
-        blank=True,
-        verbose_name='Мастер в мастере'
-    )
     rating = models.PositiveIntegerField(
         verbose_name='Рейтинг',
         help_text='Рейтинг от 1 до 5'
@@ -202,15 +198,12 @@ class Rating(models.Model):
         verbose_name_plural = 'Рейтинги'
         ordering = ['-created_at']
         unique_together = [
-            ['order', 'user', 'master'],
-            ['order', 'user', 'master_in_master']
+            ['order', 'user', 'master']
         ]
 
     def __str__(self):
         if self.master:
             return f"Рейтинг {self.rating} для мастера {self.master} от {self.user}"
-        elif self.master_in_master:
-            return f"Рейтинг {self.rating} для мастера в мастере {self.master_in_master} от {self.user}"
         return f"Рейтинг {self.rating} от {self.user}"
 
     def clean(self):
@@ -218,11 +211,8 @@ class Rating(models.Model):
         if self.rating < 1 or self.rating > 5:
             raise ValidationError({'rating': 'Рейтинг должен быть от 1 до 5'})
         
-        if not self.master and not self.master_in_master:
-            raise ValidationError('Должен быть указан либо мастер, либо мастер в мастере')
-        
-        if self.master and self.master_in_master:
-            raise ValidationError('Нельзя указать одновременно и мастер, и мастер в мастере')
+        if not self.master:
+            raise ValidationError('Должен быть указан мастер')
 
     def save(self, *args, **kwargs):
         self.clean()

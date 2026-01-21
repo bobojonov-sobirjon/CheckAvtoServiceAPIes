@@ -11,6 +11,13 @@ class Category(models.Model):
     
     name = models.CharField(max_length=255, verbose_name='Название категории')
     type_category = models.CharField(max_length=255, verbose_name='Тип категории', choices=TypeCategory.choices)
+    service_type = models.CharField(
+        max_length=100,
+        blank=True,
+        default='',
+        verbose_name='Тип услуги',
+        help_text='Общий тип услуги для связи между by_order и by_master категориями. Примеры: Ремонт, Диагностика, Замена, Техобслуживание, Шиномонтаж, Покраска, Кузовной ремонт, Электрика, Кондиционер, Тюнинг и другие'
+    )
     icon = models.FileField(upload_to='categories/icons/', verbose_name='Иконка категории', null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True, verbose_name='Дата создания')
     updated_at = models.DateTimeField(auto_now=True, verbose_name='Дата обновления')

@@ -1,5 +1,8 @@
 from django.urls import path
-from .views import LoginView, CheckSMSCodeView, SMSServiceStatusView, UserDetailsView, FAQListView
+from .views import (
+    LoginView, CheckSMSCodeView, SMSServiceStatusView, 
+    UserDetailsView, FAQListView, UpdateTelegramChatIdView
+)
 
 urlpatterns = [
     # Login (SMS kod yuborish)
@@ -13,6 +16,9 @@ urlpatterns = [
     
     # User details endpoints
     path('user/', UserDetailsView.as_view(), name='user_details'),
+    
+    # Telegram Chat ID update endpoint
+    path('update-telegram-chat-id/', UpdateTelegramChatIdView.as_view(), name='update_telegram_chat_id'),
     
     # FAQ endpoints
     path('faq/', FAQListView.as_view(), name='faq_list'),

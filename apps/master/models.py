@@ -15,6 +15,14 @@ class Master(models.Model):
         verbose_name='Пользователь'
     )
     
+    name = models.CharField(
+        max_length=255, 
+        blank=True, 
+        default='', 
+        verbose_name='Название мастерской',
+        help_text='Название мастерской (например: "СТО Авто-Сервис")'
+    )
+    
     category = models.ManyToManyField(
         Category,
         verbose_name='Категория',
@@ -190,34 +198,29 @@ class MasterServiceItems(models.Model):
         return f"{self.master_service} - {self.name}: {self.price_from}-{self.price_to}"
 
 
-class MasterInMaster(models.Model):
-    """Модель для связи мастера с мастером внутри мастера"""
+class MasterEmployee(models.Model):
+    """Сотрудники мастерской"""
     master = models.ForeignKey(
         Master,
         on_delete=models.CASCADE,
-        related_name='master_in_masters',
+        related_name='employees',
         verbose_name='Мастер'
     )
-    masterinmaster = models.ForeignKey(
+    employee = models.ForeignKey(
         User,
         on_delete=models.CASCADE,
-        related_name='master_in_master_profiles',
-        verbose_name='Мастер в мастере'
+        related_name='master_employments',
+        verbose_name='Сотрудник'
     )
-    category = models.ForeignKey(
-        Category,
-        on_delete=models.CASCADE,
-        related_name='master_in_master_categories',
-        verbose_name='Категория'
-    )
-    created_at = models.DateTimeField(auto_now_add=True, verbose_name='Дата создания')
-    updated_at = models.DateTimeField(auto_now=True, verbose_name='Дата обновления')
+    added_at = models.DateTimeField(auto_now_add=True, verbose_name='Дата добавления')
     
     class Meta:
-        verbose_name = 'Мастер в мастере'
-        verbose_name_plural = 'Мастера в мастерах'
-        ordering = ['-created_at']
-        unique_together = ['master', 'masterinmaster']
+        verbose_name = 'Сотрудник мастерской'
+        verbose_name_plural = 'Сотрудники мастерских'
+        unique_together = ['master', 'employee']
+        ordering = ['added_at']
     
     def __str__(self):
-        return f"{self.master} - {self.masterinmaster.get_full_name()}"
+        return f"{self.master} - {self.employee.email}"
+
+

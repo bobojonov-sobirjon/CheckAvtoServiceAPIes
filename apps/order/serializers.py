@@ -16,9 +16,9 @@ class OrderSerializer(serializers.ModelSerializer):
     """Сериализатор для заказа"""
     user = serializers.SerializerMethodField()
     master = serializers.SerializerMethodField()
+    masters = serializers.SerializerMethodField()
     status_display = serializers.CharField(source='get_status_display', read_only=True)
     priority_display = serializers.CharField(source='get_priority_display', read_only=True)
-    master_in_master_data = serializers.SerializerMethodField()
     car_data = serializers.SerializerMethodField()
     category_data = serializers.SerializerMethodField()
 
@@ -28,8 +28,8 @@ class OrderSerializer(serializers.ModelSerializer):
             'id', 'user',
             'car_data', 'category_data',
             'text', 'status', 'status_display', 'priority', 'priority_display',
-            'location', 'latitude', 'longitude', 'master', 
-            'master_in_master_data', 'created_at', 'updated_at'
+            'location', 'latitude', 'longitude', 'master', 'masters',
+            'created_at', 'updated_at'
         ]
         read_only_fields = ['id', 'created_at', 'updated_at']
     
@@ -39,25 +39,26 @@ class OrderSerializer(serializers.ModelSerializer):
     def get_master(self, obj):
         return MasterSerializer(obj.master, context=self.context).data
     
+    def get_masters(self, obj):
+        """Получить список назначенных мастеров (пользователей)"""
+        masters = obj.masters.all()
+        return [
+            {
+                'id': user.id,
+                'private_id': user.private_id,
+                'full_name': user.get_full_name(),
+                'phone_number': user.phone_number,
+                'email': user.email,
+                'avatar': self.context['request'].build_absolute_uri(user.avatar.url) if user.avatar and self.context.get('request') else None
+            }
+            for user in masters
+        ]
+    
     def get_car_data(self, obj):
         return CarSerializer(obj.car, many=True, context=self.context).data
     
     def get_category_data(self, obj):
         return CategorySerializer(obj.category, many=True, context=self.context).data
-    
-    def get_master_in_master_data(self, obj):
-        """Получить данные мастеров в мастере"""
-        master_in_masters = obj.master_in_master.all()
-        return [
-            {
-                'id': user.id,
-                'full_name': user.get_full_name(),
-                'phone_number': user.phone_number,
-                'email': user.email,
-                'description': user.description
-            }
-            for user in master_in_masters
-        ]
     
     def get_car_data(self, obj):
         """Получить данные машин"""
@@ -99,41 +100,67 @@ class OrderSerializer(serializers.ModelSerializer):
 
 
 class OrderCreateSerializer(serializers.ModelSerializer):
-    """Сериализатор для создания заказа"""
+    """
+    Сериализатор для создания заказа
+    
+    Поддерживает два сценария:
+    1. SOS заказ: без мастера (master_id не указан) - для экстренных ситуаций
+    2. Обычный заказ: с выбором мастера (master_id указан)
+    
+    Обязательные поля для обоих сценариев:
+    - text: описание проблемы
+    - priority: приоритет (low или high)
+    - location: адрес местоположения
+    - latitude: широта
+    - longitude: долгота
+    - car_list: список ID машин
+    - category_list: список ID категорий проблем
+    
+    Необязательные поля:
+    - master_id: ID мастера (для обычного заказа)
+    - masters_list: список ID пользователей-мастеров (для рейтинга)
+    """
     master_id = serializers.IntegerField(
         required=False,
         allow_null=True,
         write_only=True,
-        help_text="ID мастера"
+        help_text="ID мастера (необязательно). Не указывайте для SOS заказа, укажите для обычного заказа"
     )
     car_list = serializers.ListField(
         child=serializers.IntegerField(),
-        required=False,
-        allow_empty=True,
+        required=True,
+        allow_empty=False,
         write_only=True,
-        help_text="Список ID машин [1, 2, 3, ...]"
+        help_text="Список ID машин [1, 2, 3, ...] (обязательно)"
     )
     category_list = serializers.ListField(
         child=serializers.IntegerField(),
-        required=False,
-        allow_empty=True,
+        required=True,
+        allow_empty=False,
         write_only=True,
-        help_text="Список ID категорий [1, 2, 3, ...]"
+        help_text="Список ID категорий [1, 2, 3, ...] (обязательно)"
     )
-    master_in_master_list = serializers.ListField(
+    masters_list = serializers.ListField(
         child=serializers.IntegerField(),
         required=False,
         allow_empty=True,
         write_only=True,
-        help_text="Список ID пользователей (MasterInMaster group) [1, 2, 3, ...]"
+        help_text="Список ID пользователей-мастеров [1, 2, 3, ...] для назначения на заказ (необязательно)"
     )
     
     class Meta:
         model = Order
         fields = [
             'text', 'priority', 'location', 'latitude', 'longitude', 
-            'master_id', 'car_list', 'category_list', 'master_in_master_list'
+            'master_id', 'car_list', 'category_list', 'masters_list'
         ]
+        extra_kwargs = {
+            'text': {'required': True},
+            'priority': {'required': True},
+            'location': {'required': True},
+            'latitude': {'required': True},
+            'longitude': {'required': True},
+        }
 
     def validate_master_id(self, value):
         """Валидация мастера"""
@@ -170,17 +197,14 @@ class OrderCreateSerializer(serializers.ModelSerializer):
         
         return value
     
-    def validate_master_in_master_list(self, value):
-        """Валидация мастеров в мастере"""
+    def validate_masters_list(self, value):
+        """Валидация списка мастеров (пользователей)"""
         if not isinstance(value, list):
-            raise serializers.ValidationError("master_in_master_list должен быть списком ID")
+            raise serializers.ValidationError("masters_list должен быть списком ID")
         
-        # Проверяем, что все пользователи существуют и в группе MasterInMaster
         for user_id in value:
             try:
-                user = User.objects.get(id=user_id)
-                if not user.groups.filter(name='MasterInMaster').exists():
-                    raise serializers.ValidationError(f"Пользователь с ID {user_id} должен быть в группе MasterInMaster")
+                User.objects.get(id=user_id)
             except User.DoesNotExist:
                 raise serializers.ValidationError(f"Пользователь с ID {user_id} не найден")
         
@@ -199,12 +223,12 @@ class OrderCreateSerializer(serializers.ModelSerializer):
         return value
     
     def create(self, validated_data):
-        """Создание заказа с машинами, категориями и мастерами в мастере"""
+        """Создание заказа с машинами, категориями и мастерами"""
         # Извлекаем списки ID
         master_id = validated_data.pop('master_id', None)
         car_list = validated_data.pop('car_list', [])
         category_list = validated_data.pop('category_list', [])
-        master_in_master_list = validated_data.pop('master_in_master_list', [])
+        masters_list = validated_data.pop('masters_list', [])
         
         # Устанавливаем мастера, если указан
         if master_id:
@@ -221,9 +245,9 @@ class OrderCreateSerializer(serializers.ModelSerializer):
         if category_list:
             order.category.set(category_list)
         
-        # Добавляем мастеров в мастере
-        if master_in_master_list:
-            order.master_in_master.set(master_in_master_list)
+        # Добавляем мастеров (пользователей)
+        if masters_list:
+            order.masters.set(masters_list)
         
         return order
 
@@ -265,14 +289,12 @@ class RatingSerializer(serializers.ModelSerializer):
     """Сериализатор для рейтинга"""
     user_name = serializers.CharField(source='user.get_full_name', read_only=True)
     master_name = serializers.CharField(source='master.full_name', read_only=True)
-    master_in_master_name = serializers.CharField(source='master_in_master.get_full_name', read_only=True)
     
     class Meta:
         model = Rating
         fields = [
             'id', 'order', 'user', 'user_name', 'master', 'master_name',
-            'master_in_master', 'master_in_master_name', 'rating', 'comment',
-            'created_at', 'updated_at'
+            'rating', 'comment', 'created_at', 'updated_at'
         ]
         read_only_fields = ['id', 'user', 'created_at', 'updated_at']
     
@@ -285,13 +307,9 @@ class RatingSerializer(serializers.ModelSerializer):
     def validate(self, data):
         """Общая валидация"""
         master = data.get('master')
-        master_in_master = data.get('master_in_master')
         
-        if not master and not master_in_master:
-            raise serializers.ValidationError('Должен быть указан либо мастер, либо мастер в мастере')
-        
-        if master and master_in_master:
-            raise serializers.ValidationError('Нельзя указать одновременно и мастер, и мастер в мастере')
+        if not master:
+            raise serializers.ValidationError('Должен быть указан мастер')
         
         return data
     
