@@ -200,8 +200,7 @@ class CheckSMSCodeView(APIView):
                 'tokens': result['tokens']
             }
             
-            response_serializer = TokenResponseSerializer(response_data)
-            return Response(response_serializer.data, status=result['status_code'])
+            return Response(response_data, status=result['status_code'])
         else:
             return Response({
                 'success': False,
