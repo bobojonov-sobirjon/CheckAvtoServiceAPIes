@@ -100,13 +100,13 @@ class IdentifierSerializer(serializers.Serializer):
         value = value.strip()
         
         # Проверяем, является ли это email
-        if '@' in value and '.' in value:
+        if '@' in value:
             return {
                 'type': 'email',
                 'value': validate_email_format(value)
             }
-        # Проверяем, является ли это номер телефона
-        elif any(char.isdigit() for char in value):
+        # Проверяем, является ли это номер телефона (начинается с +, 7, 8, 9 или содержит только цифры)
+        elif value.startswith(('+', '7', '8', '9')) or (value.replace('+', '').replace(' ', '').replace('-', '').isdigit()):
             return {
                 'type': 'phone',
                 'value': validate_phone_number_format(value)
@@ -148,13 +148,13 @@ class SMSVerificationSerializer(serializers.Serializer):
         value = value.strip()
         
         # Проверяем, является ли это email
-        if '@' in value and '.' in value:
+        if '@' in value:
             return {
                 'type': 'email',
                 'value': validate_email_format(value)
             }
-        # Проверяем, является ли это номер телефона
-        elif any(char.isdigit() for char in value):
+        # Проверяем, является ли это номер телефона (начинается с +, 7, 8, 9 или содержит только цифры)
+        elif value.startswith(('+', '7', '8', '9')) or (value.replace('+', '').replace(' ', '').replace('-', '').isdigit()):
             return {
                 'type': 'phone',
                 'value': validate_phone_number_format(value)

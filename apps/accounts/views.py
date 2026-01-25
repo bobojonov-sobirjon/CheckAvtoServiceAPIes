@@ -21,6 +21,45 @@ from .services import SMSService
 from .models import CustomUser, FAQ
 
 
+class HealthCheckView(APIView):
+    """Test endpoint for checking CORS and server status"""
+    permission_classes = [AllowAny]
+    
+    @extend_schema(
+        summary="Health check endpoint",
+        description="Simple endpoint to test CORS and server connectivity",
+        tags=['System'],
+        responses={
+            200: {
+                'type': 'object',
+                'properties': {
+                    'status': {'type': 'string'},
+                    'message': {'type': 'string'},
+                    'cors_enabled': {'type': 'boolean'}
+                }
+            }
+        }
+    )
+    def get(self, request):
+        """Health check"""
+        return Response({
+            'status': 'ok',
+            'message': 'Server is running',
+            'cors_enabled': True,
+            'method': 'GET'
+        }, status=status.HTTP_200_OK)
+    
+    def post(self, request):
+        """Health check POST"""
+        return Response({
+            'status': 'ok',
+            'message': 'Server is running',
+            'cors_enabled': True,
+            'method': 'POST',
+            'data_received': request.data
+        }, status=status.HTTP_200_OK)
+
+
 class LoginView(APIView):
     """
     Вход по email или номеру телефона (отправка SMS кода)

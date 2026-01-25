@@ -1,10 +1,14 @@
 from django.urls import path
 from .views import (
     LoginView, CheckSMSCodeView, SMSServiceStatusView, 
-    UserDetailsView, FAQListView, UpdateTelegramChatIdView
+    UserDetailsView, FAQListView, UpdateTelegramChatIdView,
+    HealthCheckView
 )
 
 urlpatterns = [
+    # Health check
+    path('health/', HealthCheckView.as_view(), name='health_check'),
+    
     # Login (SMS kod yuborish)
     path('login/', LoginView.as_view(), name='login'),
     
