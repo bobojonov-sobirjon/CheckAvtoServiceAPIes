@@ -171,12 +171,19 @@ class MasterCreateSerializer(serializers.ModelSerializer):
         write_only=True,
         help_text="Список ID категорий [1, 2, 3, ...]. Категории должны быть типа 'by_master'"
     )
+    images = serializers.ListField(
+        child=serializers.ImageField(),
+        required=False,
+        allow_empty=True,
+        write_only=True,
+        help_text="Список изображений мастерской (multiple files)"
+    )
     
     class Meta:
         model = Master
         fields = [
             'name', 'city', 'address', 'latitude', 'longitude', 'phone', 'working_time',
-            'description', 'services', 'category', 'card_number', 
+            'description', 'services', 'category', 'images', 'card_number', 
             'card_expiry_month', 'card_expiry_year', 'card_cvv'
         ]
         extra_kwargs = {
@@ -193,6 +200,113 @@ class MasterCreateSerializer(serializers.ModelSerializer):
             'card_expiry_year': {'required': False},
             'card_cvv': {'required': False, 'allow_blank': True},
         }
+    
+    def to_internal_value(self, data):
+        """Преобразование данных из multipart/form-data"""
+        import json
+        from decimal import Decimal, InvalidOperation
+        from django.http import QueryDict
+        
+        # Создаем обычный dict из данных для возможности модификации
+        # QueryDict позволяет множественные значения, но для наших полей это не нужно
+        if isinstance(data, QueryDict):
+            # Конвертируем QueryDict в dict, беря последнее значение для каждого ключа
+            # (кроме images, которые уже обработаны в view)
+            data_dict = {}
+            for key in data.keys():
+                if key == 'images':
+                    # Для images используем getlist, так как их может быть несколько
+                    data_dict[key] = data.getlist(key)
+                else:
+                    # Для остальных полей берем последнее значение
+                    value = data.get(key)
+                    if value is not None:
+                        data_dict[key] = value
+            data = data_dict
+        elif hasattr(data, 'copy'):
+            data = data.copy()
+        else:
+            data = dict(data)
+        
+        # Обрабатываем latitude и longitude (могут быть строкой с запятой или точкой)
+        if 'latitude' in data:
+            lat_value = data.get('latitude')
+            if isinstance(lat_value, str):
+                try:
+                    # Заменяем запятую на точку для float
+                    lat_str = lat_value.replace(',', '.')
+                    # Конвертируем в Decimal для точности
+                    data['latitude'] = str(Decimal(lat_str))
+                except (ValueError, AttributeError, InvalidOperation):
+                    # Если конвертация не удалась, оставляем как есть для стандартной валидации
+                    pass
+        
+        if 'longitude' in data:
+            lon_value = data.get('longitude')
+            if isinstance(lon_value, str):
+                try:
+                    # Заменяем запятую на точку для float
+                    lon_str = lon_value.replace(',', '.')
+                    # Конвертируем в Decimal для точности
+                    data['longitude'] = str(Decimal(lon_str))
+                except (ValueError, AttributeError, InvalidOperation):
+                    # Если конвертация не удалась, оставляем как есть для стандартной валидации
+                    pass
+        
+        # Обрабатываем services (может быть JSON строкой или списком)
+        if 'services' in data:
+            services_value = data.get('services')
+            if isinstance(services_value, str):
+                # Удаляем пробелы и проверяем, не пустая ли строка
+                services_value = services_value.strip()
+                if services_value:
+                    try:
+                        # Пробуем распарсить как JSON
+                        parsed = json.loads(services_value)
+                        if isinstance(parsed, list):
+                            data['services'] = parsed
+                        else:
+                            # Если не список, делаем пустым списком
+                            data['services'] = []
+                    except (json.JSONDecodeError, TypeError):
+                        # Если не JSON, делаем пустым списком
+                        data['services'] = []
+                else:
+                    data['services'] = []
+            elif not isinstance(services_value, list):
+                # Если это не список и не строка, делаем пустым списком
+                data['services'] = []
+        
+        # Обрабатываем category (может быть строкой или JSON строкой)
+        if 'category' in data:
+            category_value = data.get('category')
+            if isinstance(category_value, str):
+                category_value = category_value.strip()
+                if category_value:
+                    try:
+                        # Пробуем распарсить как JSON массив
+                        parsed = json.loads(category_value)
+                        if isinstance(parsed, list):
+                            data['category'] = parsed
+                        else:
+                            # Если это просто число, делаем список
+                            data['category'] = [int(parsed)]
+                    except (json.JSONDecodeError, ValueError, TypeError):
+                        # Если не JSON, пробуем как число
+                        try:
+                            data['category'] = [int(category_value)]
+                        except (ValueError, TypeError):
+                            data['category'] = []
+                else:
+                    data['category'] = []
+            elif not isinstance(category_value, list):
+                # Если это не список и не строка, пробуем преобразовать
+                try:
+                    data['category'] = [int(category_value)]
+                except (ValueError, TypeError):
+                    data['category'] = []
+        
+        return super().to_internal_value(data)
     
     def validate_latitude(self, value):
         """Валидация широты"""
@@ -213,20 +327,36 @@ class MasterCreateSerializer(serializers.ModelSerializer):
         if not isinstance(value, list):
             raise serializers.ValidationError("Услуги должны быть списком")
         
+        # Фильтруем пустые словари и None значения
+        value = [s for s in value if s and isinstance(s, dict) and s]
+        
         # Проверяем, что каждый элемент - это объект с name, price_from, price_to и category
-        for service in value:
+        for idx, service in enumerate(value):
             if not isinstance(service, dict):
-                raise serializers.ValidationError("Каждая услуга должна быть объектом")
+                raise serializers.ValidationError({
+                    str(idx): "Каждая услуга должна быть объектом"
+                })
+            
+            # Проверяем наличие обязательных полей
             required_fields = ['name', 'price_from', 'price_to', 'category']
-            for field in required_fields:
-                if field not in service:
-                    raise serializers.ValidationError(f"Каждая услуга должна содержать '{field}'")
+            missing_fields = [field for field in required_fields if field not in service or service[field] is None]
+            
+            if missing_fields:
+                raise serializers.ValidationError({
+                    str(idx): f"Услуга должна содержать поля: {', '.join(missing_fields)}"
+                })
             
             # Проверяем, что категория существует
             try:
                 Category.objects.get(id=service['category'])
             except Category.DoesNotExist:
-                raise serializers.ValidationError(f"Категория с ID {service['category']} не найдена")
+                raise serializers.ValidationError({
+                    str(idx): f"Категория с ID {service['category']} не найдена"
+                })
+            except (ValueError, TypeError):
+                raise serializers.ValidationError({
+                    str(idx): f"Категория должна быть числом, получено: {type(service['category']).__name__}"
+                })
         
         return value
     
@@ -246,9 +376,11 @@ class MasterCreateSerializer(serializers.ModelSerializer):
     def create(self, validated_data):
         """Создание мастера с автоматическим назначением пользователя"""
         from django.contrib.auth.models import Group
+        from .models import MasterImage
         
         services_data = validated_data.pop('services', [])
         category_ids = validated_data.pop('category', [])
+        images_data = validated_data.pop('images', [])
         user = self.context['request'].user
         validated_data['user'] = user
         
@@ -262,6 +394,11 @@ class MasterCreateSerializer(serializers.ModelSerializer):
         # Добавляем категории
         if category_ids:
             master.category.set(category_ids)
+        
+        # Создаем изображения мастера
+        if images_data:
+            for image in images_data:
+                MasterImage.objects.create(master=master, image=image)
         
         # Создаем услуги мастера
         if services_data:
@@ -317,6 +454,100 @@ class MasterUpdateSerializer(serializers.ModelSerializer):
             'card_cvv': {'required': False},
             'description': {'required': False, 'allow_blank': True, 'allow_null': True},
         }
+    
+    def to_internal_value(self, data):
+        """Преобразование данных из multipart/form-data"""
+        import json
+        from decimal import Decimal, InvalidOperation
+        from django.http import QueryDict
+        
+        # Создаем обычный dict из данных для возможности модификации
+        # QueryDict позволяет множественные значения, но для наших полей это не нужно
+        if isinstance(data, QueryDict):
+            # Конвертируем QueryDict в dict, беря последнее значение для каждого ключа
+            # (кроме images, которые уже обработаны в view)
+            data_dict = {}
+            for key in data.keys():
+                if key == 'images':
+                    # Для images используем getlist, так как их может быть несколько
+                    data_dict[key] = data.getlist(key)
+                else:
+                    # Для остальных полей берем последнее значение
+                    value = data.get(key)
+                    if value is not None:
+                        data_dict[key] = value
+            data = data_dict
+        elif hasattr(data, 'copy'):
+            data = data.copy()
+        else:
+            data = dict(data)
+        
+        # Обрабатываем latitude и longitude (могут быть строкой с запятой или точкой)
+        if 'latitude' in data:
+            lat_value = data.get('latitude')
+            if isinstance(lat_value, str):
+                try:
+                    # Заменяем запятую на точку для float
+                    lat_str = lat_value.replace(',', '.')
+                    # Конвертируем в Decimal для точности
+                    data['latitude'] = str(Decimal(lat_str))
+                except (ValueError, AttributeError, InvalidOperation):
+                    # Если конвертация не удалась, оставляем как есть для стандартной валидации
+                    pass
+        
+        if 'longitude' in data:
+            lon_value = data.get('longitude')
+            if isinstance(lon_value, str):
+                try:
+                    # Заменяем запятую на точку для float
+                    lon_str = lon_value.replace(',', '.')
+                    # Конвертируем в Decimal для точности
+                    data['longitude'] = str(Decimal(lon_str))
+                except (ValueError, AttributeError, InvalidOperation):
+                    # Если конвертация не удалась, оставляем как есть для стандартной валидации
+                    pass
+        
+        # Обрабатываем category (может быть строкой или JSON строкой)
+        if 'category' in data:
+            category_value = data.get('category')
+            if isinstance(category_value, str):
+                category_value = category_value.strip()
+                if category_value:
+                    try:
+                        # Пробуем распарсить как JSON массив
+                        parsed = json.loads(category_value)
+                        if isinstance(parsed, list):
+                            data['category'] = parsed
+                        else:
+                            # Если это просто число, делаем список
+                            data['category'] = [int(parsed)]
+                    except (json.JSONDecodeError, ValueError, TypeError):
+                        # Если не JSON, пробуем как число
+                        try:
+                            data['category'] = [int(category_value)]
+                        except (ValueError, TypeError):
+                            data['category'] = []
+                else:
+                    data['category'] = []
+            elif not isinstance(category_value, list):
+                # Если это не список и не строка, пробуем преобразовать
+                try:
+                    data['category'] = [int(category_value)]
+                except (ValueError, TypeError):
+                    data['category'] = []
+        
+        # Обрабатываем images - убеждаемся, что это список
+        if 'images' in data:
+            images_value = data.get('images')
+            # Если images уже список файлов, оставляем как есть
+            if not isinstance(images_value, list):
+                # Если это не список, делаем список
+                if images_value is not None:
+                    data['images'] = [images_value]
+                else:
+                    data['images'] = []
+        
+        return super().to_internal_value(data)
     
     def validate_latitude(self, value):
         """Валидация широты"""

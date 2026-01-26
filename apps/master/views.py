@@ -93,6 +93,8 @@ class MasterProfileView(APIView):
         
         **ВАЖНО**: Вы должны быть в группе 'Owner' для выполнения этой операции!
         
+        **ФОРМАТ ЗАПРОСА**: multipart/form-data (для загрузки изображений)
+        
         **ВСЕ ПОЛЯ НЕОБЯЗАТЕЛЬНЫ!** Можно отправить пустой объект {} или заполнить только нужные поля:
         
         - `name`: Название мастерской (строка, например: "СТО Авто-Сервис")
@@ -103,8 +105,9 @@ class MasterProfileView(APIView):
         - `latitude`: Широта местоположения (число от -90 до 90, например: 41.3111)
         - `longitude`: Долгота местоположения (число от -180 до 180, например: 69.2797)
         - `description`: Описание мастерской и услуг (текст)
-        - `category`: Список ID категорий услуг (массив чисел, например: [1, 2, 3])
-        - `services`: Список услуг с ценами (массив объектов, каждый содержит: name, price_from, price_to, category)
+        - `category`: Список ID категорий услуг (JSON массив строк, например: "[1, 2, 3]")
+        - `services`: Список услуг с ценами (JSON массив объектов, каждый содержит: name, price_from, price_to, category)
+        - `images`: Множественные изображения мастерской (файлы, можно загрузить несколько)
         - `card_number`: Номер банковской карты для платежей (строка, до 19 символов)
         - `card_expiry_month`: Месяц истечения срока карты (число 1-12)
         - `card_expiry_year`: Год истечения срока карты (число, например: 2026)
@@ -115,8 +118,12 @@ class MasterProfileView(APIView):
         - Категории должны существовать в базе данных и иметь тип 'by_master'
         - После создания мастерской, user автоматически добавляется в группу 'Master'
         - Можно создать мастерскую вообще без данных и заполнить потом через PUT/PATCH
+        - Для загрузки изображений используйте multipart/form-data формат
         """,
-        request=MasterCreateSerializer,
+        request={
+            'multipart/form-data': MasterCreateSerializer,
+            'application/json': MasterCreateSerializer,
+        },
         examples=[
             OpenApiExample(
                 'Полный пример создания мастерской',
@@ -175,7 +182,17 @@ class MasterProfileView(APIView):
     )
     def post(self, request):
         """Создание профиля мастера (ТОЛЬКО для Owner)"""
-        serializer = MasterCreateSerializer(data=request.data, context={'request': request})
+        # Обрабатываем multipart/form-data для images
+        data = request.data.copy()
+        
+        # Обрабатываем images из request.FILES
+        if request.FILES:
+            images = request.FILES.getlist('images')
+            if images:
+                # Добавляем images в data как список
+                data.setlist('images', images)
+        
+        serializer = MasterCreateSerializer(data=data, context={'request': request})
         if serializer.is_valid():
             master = serializer.save()
             response_serializer = MasterSerializer(master, context={'request': request})
@@ -502,9 +519,30 @@ class MasterDetailsView(APIView):
         
         **ВАЖНО**: Вы должны быть в группе 'Owner' для выполнения этой операции!
         
-        Все поля необязательны, можно обновить только нужные поля.
+        **ФОРМАТ ЗАПРОСА**: multipart/form-data (для загрузки изображений)
+        
+        Все поля необязательны, можно обновить только нужные поля:
+        
+        - `city`: Город мастерской (строка)
+        - `address`: Адрес мастерской (строка)
+        - `phone`: Номер телефона мастерской (строка)
+        - `working_time`: Режим работы (строка)
+        - `latitude`: Широта местоположения (число от -90 до 90)
+        - `longitude`: Долгота местоположения (число от -180 до 180)
+        - `description`: Описание мастерской и услуг (текст)
+        - `category`: Список ID категорий услуг (JSON массив строк, например: "[1, 2, 3]")
+        - `images`: Множественные изображения мастерской (файлы, можно загрузить несколько)
+        - `card_number`: Номер банковской карты для платежей (строка)
+        - `card_expiry_month`: Месяц истечения срока карты (число 1-12)
+        - `card_expiry_year`: Год истечения срока карты (число)
+        - `card_cvv`: CVV код карты (строка, 3-4 цифры)
+        
+        **Примечание**: При загрузке новых изображений старые изображения будут удалены и заменены новыми.
         """,
-        request=MasterUpdateSerializer,
+        request={
+            'multipart/form-data': MasterUpdateSerializer,
+            'application/json': MasterUpdateSerializer,
+        },
         responses={
             200: MasterSerializer,
             400: {'type': 'object', 'properties': {'detail': {'type': 'string'}}},
@@ -522,7 +560,18 @@ class MasterDetailsView(APIView):
                 status=status.HTTP_404_NOT_FOUND
             )
         
-        serializer = MasterUpdateSerializer(master, data=request.data, context={'request': request})
+        # Обрабатываем multipart/form-data для images
+        data = request.data.copy()
+        if request.FILES:
+            images = request.FILES.getlist('images')
+            if images:
+                # Добавляем images в data как список
+                if hasattr(data, 'setlist'):
+                    data.setlist('images', images)
+                else:
+                    data['images'] = images
+        
+        serializer = MasterUpdateSerializer(master, data=data, context={'request': request})
         if serializer.is_valid():
             serializer.save()
             return Response(serializer.data, status=status.HTTP_200_OK)
@@ -535,9 +584,30 @@ class MasterDetailsView(APIView):
         
         **ВАЖНО**: Вы должны быть в группе 'Owner' для выполнения этой операции!
         
-        Можно обновить только нужные поля, не передавая все остальные.
+        **ФОРМАТ ЗАПРОСА**: multipart/form-data (для загрузки изображений)
+        
+        Можно обновить только нужные поля, не передавая все остальные:
+        
+        - `city`: Город мастерской (строка)
+        - `address`: Адрес мастерской (строка)
+        - `phone`: Номер телефона мастерской (строка)
+        - `working_time`: Режим работы (строка)
+        - `latitude`: Широта местоположения (число от -90 до 90)
+        - `longitude`: Долгота местоположения (число от -180 до 180)
+        - `description`: Описание мастерской и услуг (текст)
+        - `category`: Список ID категорий услуг (JSON массив строк, например: "[1, 2, 3]")
+        - `images`: Множественные изображения мастерской (файлы, можно загрузить несколько)
+        - `card_number`: Номер банковской карты для платежей (строка)
+        - `card_expiry_month`: Месяц истечения срока карты (число 1-12)
+        - `card_expiry_year`: Год истечения срока карты (число)
+        - `card_cvv`: CVV код карты (строка, 3-4 цифры)
+        
+        **Примечание**: При загрузке новых изображений старые изображения будут удалены и заменены новыми.
         """,
-        request=MasterUpdateSerializer,
+        request={
+            'multipart/form-data': MasterUpdateSerializer,
+            'application/json': MasterUpdateSerializer,
+        },
         responses={
             200: MasterSerializer,
             400: {'type': 'object', 'properties': {'detail': {'type': 'string', 'example': 'Ошибка валидации данных'}}},
@@ -555,7 +625,18 @@ class MasterDetailsView(APIView):
                 status=status.HTTP_404_NOT_FOUND
             )
         
-        serializer = MasterUpdateSerializer(master, data=request.data, partial=True, context={'request': request})
+        # Обрабатываем multipart/form-data для images
+        data = request.data.copy()
+        if request.FILES:
+            images = request.FILES.getlist('images')
+            if images:
+                # Добавляем images в data как список
+                if hasattr(data, 'setlist'):
+                    data.setlist('images', images)
+                else:
+                    data['images'] = images
+        
+        serializer = MasterUpdateSerializer(master, data=data, partial=True, context={'request': request})
         if serializer.is_valid():
             serializer.save()
             return Response(serializer.data, status=status.HTTP_200_OK)
