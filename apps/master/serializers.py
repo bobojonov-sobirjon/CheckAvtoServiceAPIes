@@ -398,20 +398,13 @@ class MasterCreateSerializer(serializers.ModelSerializer):
 
 class MasterUpdateSerializer(serializers.ModelSerializer):
     """Сериализатор для обновления мастера (частичное обновление)"""
-    category = serializers.ListField(
-        child=serializers.IntegerField(),
-        required=False,
-        allow_empty=True,
-        write_only=True,
-        help_text="Список ID категорий [1, 2, 3, ...]"
-    )
     
     class Meta:
         model = Master
         fields = [
             'name', 'city', 'address', 'latitude', 'longitude', 'phone', 'working_time', 
             'card_number', 'card_expiry_month', 'card_expiry_year', 
-            'card_cvv', 'description', 'category'
+            'card_cvv', 'description'
         ]
         extra_kwargs = {
             'name': {'required': False, 'allow_blank': True},
@@ -466,31 +459,6 @@ class MasterUpdateSerializer(serializers.ModelSerializer):
                 except (ValueError, AttributeError, InvalidOperation):
                     pass
         
-        # Обрабатываем category (может быть строкой или JSON строкой)
-        if 'category' in data:
-            category_value = data.get('category')
-            if isinstance(category_value, str):
-                category_value = category_value.strip()
-                if category_value:
-                    try:
-                        parsed = json.loads(category_value)
-                        if isinstance(parsed, list):
-                            data['category'] = parsed
-                        else:
-                            data['category'] = [int(parsed)]
-                    except (json.JSONDecodeError, ValueError, TypeError):
-                        try:
-                            data['category'] = [int(category_value)]
-                        except (ValueError, TypeError):
-                            data['category'] = []
-                else:
-                    data['category'] = []
-            elif not isinstance(category_value, list):
-                try:
-                    data['category'] = [int(category_value)]
-                except (ValueError, TypeError):
-                    data['category'] = []
-        
         return super().to_internal_value(data)
     
     def validate_latitude(self, value):
@@ -506,31 +474,6 @@ class MasterUpdateSerializer(serializers.ModelSerializer):
             if not (-180 <= value <= 180):
                 raise serializers.ValidationError("Долгота должна быть между -180 и 180")
         return value
-    
-    def validate_category(self, value):
-        """Валидация категорий"""
-        if not isinstance(value, list):
-            raise serializers.ValidationError("Категории должны быть списком ID")
-        
-        category_ids = set(value)
-        existing_categories = Category.objects.filter(id__in=category_ids)
-        if existing_categories.count() != len(category_ids):
-            raise serializers.ValidationError("Некоторые категории не найдены")
-        
-        return value
-    
-    def update(self, instance, validated_data):
-        """Обновление мастера с обработкой категорий"""
-        category_ids = validated_data.pop('category', None)
-        
-        # Обновляем основные поля
-        instance = super().update(instance, validated_data)
-        
-        # Если переданы категории, обновляем их
-        if category_ids is not None:
-            instance.category.set(category_ids)
-        
-        return instance
 
 
 class AddMasterImagesSerializer(serializers.Serializer):
