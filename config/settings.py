@@ -312,7 +312,7 @@ SPECTACULAR_SETTINGS = {
         'hideHostname': True,
     },
     'SERVERS': [
-        {'url': 'http://31.128.43.149:6060', 'description': 'Production server'},
+        # {'url': 'http://31.128.43.149:6060', 'description': 'Production server'},
         {'url': 'http://localhost:8000', 'description': 'Development server'},
     ],
     'TAGS': [

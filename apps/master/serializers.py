@@ -171,19 +171,12 @@ class MasterCreateSerializer(serializers.ModelSerializer):
         write_only=True,
         help_text="Список ID категорий [1, 2, 3, ...]. Категории должны быть типа 'by_master'"
     )
-    images = serializers.ListField(
-        child=serializers.ImageField(),
-        required=False,
-        allow_empty=True,
-        write_only=True,
-        help_text="Список изображений мастерской (multiple files)"
-    )
     
     class Meta:
         model = Master
         fields = [
             'name', 'city', 'address', 'latitude', 'longitude', 'phone', 'working_time',
-            'description', 'services', 'category', 'images', 'card_number', 
+            'description', 'services', 'category', 'card_number', 
             'card_expiry_month', 'card_expiry_year', 'card_cvv'
         ]
         extra_kwargs = {
@@ -208,20 +201,12 @@ class MasterCreateSerializer(serializers.ModelSerializer):
         from django.http import QueryDict
         
         # Создаем обычный dict из данных для возможности модификации
-        # QueryDict позволяет множественные значения, но для наших полей это не нужно
         if isinstance(data, QueryDict):
-            # Конвертируем QueryDict в dict, беря последнее значение для каждого ключа
-            # (кроме images, которые уже обработаны в view)
             data_dict = {}
             for key in data.keys():
-                if key == 'images':
-                    # Для images используем getlist, так как их может быть несколько
-                    data_dict[key] = data.getlist(key)
-                else:
-                    # Для остальных полей берем последнее значение
-                    value = data.get(key)
-                    if value is not None:
-                        data_dict[key] = value
+                value = data.get(key)
+                if value is not None:
+                    data_dict[key] = value
             data = data_dict
         elif hasattr(data, 'copy'):
             data = data.copy()
@@ -376,11 +361,9 @@ class MasterCreateSerializer(serializers.ModelSerializer):
     def create(self, validated_data):
         """Создание мастера с автоматическим назначением пользователя"""
         from django.contrib.auth.models import Group
-        from .models import MasterImage
         
         services_data = validated_data.pop('services', [])
         category_ids = validated_data.pop('category', [])
-        images_data = validated_data.pop('images', [])
         user = self.context['request'].user
         validated_data['user'] = user
         
@@ -394,11 +377,6 @@ class MasterCreateSerializer(serializers.ModelSerializer):
         # Добавляем категории
         if category_ids:
             master.category.set(category_ids)
-        
-        # Создаем изображения мастера
-        if images_data:
-            for image in images_data:
-                MasterImage.objects.create(master=master, image=image)
         
         # Создаем услуги мастера
         if services_data:
@@ -420,12 +398,6 @@ class MasterCreateSerializer(serializers.ModelSerializer):
 
 class MasterUpdateSerializer(serializers.ModelSerializer):
     """Сериализатор для обновления мастера (частичное обновление)"""
-    images = serializers.ListField(
-        child=serializers.ImageField(),
-        required=False,
-        allow_empty=True,
-        write_only=True
-    )
     category = serializers.ListField(
         child=serializers.IntegerField(),
         required=False,
@@ -437,11 +409,12 @@ class MasterUpdateSerializer(serializers.ModelSerializer):
     class Meta:
         model = Master
         fields = [
-            'city', 'address', 'latitude', 'longitude', 'phone', 'working_time', 
+            'name', 'city', 'address', 'latitude', 'longitude', 'phone', 'working_time', 
             'card_number', 'card_expiry_month', 'card_expiry_year', 
-            'card_cvv', 'description', 'images', 'category'
+            'card_cvv', 'description', 'category'
         ]
         extra_kwargs = {
+            'name': {'required': False, 'allow_blank': True},
             'city': {'required': False},
             'address': {'required': False},
             'latitude': {'required': False},
@@ -462,20 +435,12 @@ class MasterUpdateSerializer(serializers.ModelSerializer):
         from django.http import QueryDict
         
         # Создаем обычный dict из данных для возможности модификации
-        # QueryDict позволяет множественные значения, но для наших полей это не нужно
         if isinstance(data, QueryDict):
-            # Конвертируем QueryDict в dict, беря последнее значение для каждого ключа
-            # (кроме images, которые уже обработаны в view)
             data_dict = {}
             for key in data.keys():
-                if key == 'images':
-                    # Для images используем getlist, так как их может быть несколько
-                    data_dict[key] = data.getlist(key)
-                else:
-                    # Для остальных полей берем последнее значение
-                    value = data.get(key)
-                    if value is not None:
-                        data_dict[key] = value
+                value = data.get(key)
+                if value is not None:
+                    data_dict[key] = value
             data = data_dict
         elif hasattr(data, 'copy'):
             data = data.copy()
@@ -487,24 +452,18 @@ class MasterUpdateSerializer(serializers.ModelSerializer):
             lat_value = data.get('latitude')
             if isinstance(lat_value, str):
                 try:
-                    # Заменяем запятую на точку для float
                     lat_str = lat_value.replace(',', '.')
-                    # Конвертируем в Decimal для точности
                     data['latitude'] = str(Decimal(lat_str))
                 except (ValueError, AttributeError, InvalidOperation):
-                    # Если конвертация не удалась, оставляем как есть для стандартной валидации
                     pass
         
         if 'longitude' in data:
             lon_value = data.get('longitude')
             if isinstance(lon_value, str):
                 try:
-                    # Заменяем запятую на точку для float
                     lon_str = lon_value.replace(',', '.')
-                    # Конвертируем в Decimal для точности
                     data['longitude'] = str(Decimal(lon_str))
                 except (ValueError, AttributeError, InvalidOperation):
-                    # Если конвертация не удалась, оставляем как есть для стандартной валидации
                     pass
         
         # Обрабатываем category (может быть строкой или JSON строкой)
@@ -514,15 +473,12 @@ class MasterUpdateSerializer(serializers.ModelSerializer):
                 category_value = category_value.strip()
                 if category_value:
                     try:
-                        # Пробуем распарсить как JSON массив
                         parsed = json.loads(category_value)
                         if isinstance(parsed, list):
                             data['category'] = parsed
                         else:
-                            # Если это просто число, делаем список
                             data['category'] = [int(parsed)]
                     except (json.JSONDecodeError, ValueError, TypeError):
-                        # Если не JSON, пробуем как число
                         try:
                             data['category'] = [int(category_value)]
                         except (ValueError, TypeError):
@@ -530,22 +486,10 @@ class MasterUpdateSerializer(serializers.ModelSerializer):
                 else:
                     data['category'] = []
             elif not isinstance(category_value, list):
-                # Если это не список и не строка, пробуем преобразовать
                 try:
                     data['category'] = [int(category_value)]
                 except (ValueError, TypeError):
                     data['category'] = []
-        
-        # Обрабатываем images - убеждаемся, что это список
-        if 'images' in data:
-            images_value = data.get('images')
-            # Если images уже список файлов, оставляем как есть
-            if not isinstance(images_value, list):
-                # Если это не список, делаем список
-                if images_value is not None:
-                    data['images'] = [images_value]
-                else:
-                    data['images'] = []
         
         return super().to_internal_value(data)
     
@@ -568,7 +512,6 @@ class MasterUpdateSerializer(serializers.ModelSerializer):
         if not isinstance(value, list):
             raise serializers.ValidationError("Категории должны быть списком ID")
         
-        # Проверяем, что все категории существуют
         category_ids = set(value)
         existing_categories = Category.objects.filter(id__in=category_ids)
         if existing_categories.count() != len(category_ids):
@@ -577,8 +520,7 @@ class MasterUpdateSerializer(serializers.ModelSerializer):
         return value
     
     def update(self, instance, validated_data):
-        """Обновление мастера с обработкой изображений и категорий"""
-        images_data = validated_data.pop('images', None)
+        """Обновление мастера с обработкой категорий"""
         category_ids = validated_data.pop('category', None)
         
         # Обновляем основные поля
@@ -588,16 +530,49 @@ class MasterUpdateSerializer(serializers.ModelSerializer):
         if category_ids is not None:
             instance.category.set(category_ids)
         
-        # Если переданы изображения, удаляем старые и создаем новые
-        if images_data is not None:
-            # Удаляем старые изображения
-            MasterImage.objects.filter(master=instance).delete()
-            
-            # Создаем новые изображения
-            for image in images_data:
-                MasterImage.objects.create(master=instance, image=image)
-        
         return instance
+
+
+class AddMasterImagesSerializer(serializers.Serializer):
+    """Сериализатор для добавления изображений к мастеру"""
+    master_id = serializers.IntegerField(
+        required=True,
+        help_text="ID мастера к которому добавляем изображения"
+    )
+    images = serializers.ListField(
+        child=serializers.ImageField(),
+        required=True,
+        allow_empty=False,
+        help_text="Список изображений для добавления (multiple files)"
+    )
+    
+    def validate_master_id(self, value):
+        """Проверка существования мастера"""
+        try:
+            Master.objects.get(id=value)
+        except Master.DoesNotExist:
+            raise serializers.ValidationError("Мастер с таким ID не найден")
+        return value
+    
+    def validate_images(self, value):
+        """Валидация изображений"""
+        if not value:
+            raise serializers.ValidationError("Необходимо загрузить хотя бы одно изображение")
+        return value
+
+
+class UpdateMasterImageSerializer(serializers.ModelSerializer):
+    """Сериализатор для обновления изображения мастера"""
+    
+    class Meta:
+        model = MasterImage
+        fields = ['image']
+    
+    def validate_image(self, value):
+        """Валидация изображения"""
+        if not value:
+            raise serializers.ValidationError("Изображение обязательно")
+        return value
 
 
 class MasterNearbySerializer(serializers.ModelSerializer):
@@ -815,3 +790,62 @@ class MasterEmployeeCreateSerializer(serializers.Serializer):
             })
         
         return attrs
+
+
+class AddServiceItemsSerializer(serializers.Serializer):
+    """Сериализатор для добавления услуг к мастеру через master_id"""
+    master_id = serializers.IntegerField(
+        required=True,
+        help_text="ID мастера к которому добавляем услуги"
+    )
+    services = serializers.ListField(
+        child=serializers.DictField(),
+        required=True,
+        allow_empty=False,
+        help_text="Список услуг для добавления"
+    )
+    
+    def validate_master_id(self, value):
+        """Проверка существования мастера"""
+        try:
+            Master.objects.get(id=value)
+        except Master.DoesNotExist:
+            raise serializers.ValidationError("Мастер с таким ID не найден")
+        return value
+    
+    def validate_services(self, value):
+        """Валидация списка услуг"""
+        if not isinstance(value, list):
+            raise serializers.ValidationError("services должен быть списком")
+        
+        for idx, service in enumerate(value):
+            if not isinstance(service, dict):
+                raise serializers.ValidationError(f"Услуга #{idx+1} должна быть объектом")
+            
+            # Проверяем обязательные поля
+            required_fields = ['name', 'price_from', 'price_to', 'category']
+            for field in required_fields:
+                if field not in service:
+                    raise serializers.ValidationError(f"Услуга #{idx+1}: отсутствует поле '{field}'")
+            
+            # Проверяем категорию
+            try:
+                Category.objects.get(id=service['category'])
+            except Category.DoesNotExist:
+                raise serializers.ValidationError(f"Услуга #{idx+1}: категория с ID {service['category']} не найдена")
+        
+        return value
+
+
+class UpdateServiceItemSerializer(serializers.ModelSerializer):
+    """Сериализатор для обновления элемента услуги"""
+    
+    class Meta:
+        model = MasterServiceItems
+        fields = ['name', 'price_from', 'price_to', 'category']
+    
+    def validate_category(self, value):
+        """Проверка существования категории"""
+        if not Category.objects.filter(id=value.id).exists():
+            raise serializers.ValidationError("Категория не найдена")
+        return value

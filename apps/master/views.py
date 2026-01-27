@@ -5,10 +5,12 @@ from rest_framework.permissions import IsAuthenticated, AllowAny
 from drf_spectacular.utils import extend_schema, OpenApiExample, OpenApiParameter
 from drf_spectacular.types import OpenApiTypes
 from django.db.models import Q
-from .models import Master, MasterService, MasterServiceItems, MasterEmployee
+from .models import Master, MasterService, MasterServiceItems, MasterEmployee, MasterImage
 from .serializers import (
     MasterSerializer, MasterCreateSerializer, MasterUpdateSerializer, MasterNearbySerializer,
-    MasterServiceSerializer, MasterServiceItemsSerializer, MasterEmployeeCreateSerializer
+    MasterServiceSerializer, MasterServiceItemsSerializer, MasterEmployeeCreateSerializer,
+    AddServiceItemsSerializer, UpdateServiceItemSerializer, AddMasterImagesSerializer, 
+    UpdateMasterImageSerializer, MasterImageSerializer
 )
 from .permissions import IsMasterGroup, IsOwnerGroup
 from django.contrib.auth import get_user_model
@@ -107,7 +109,6 @@ class MasterProfileView(APIView):
         - `description`: Описание мастерской и услуг (текст)
         - `category`: Список ID категорий услуг (JSON массив строк, например: "[1, 2, 3]")
         - `services`: Список услуг с ценами (JSON массив объектов, каждый содержит: name, price_from, price_to, category)
-        - `images`: Множественные изображения мастерской (файлы, можно загрузить несколько)
         - `card_number`: Номер банковской карты для платежей (строка, до 19 символов)
         - `card_expiry_month`: Месяц истечения срока карты (число 1-12)
         - `card_expiry_year`: Год истечения срока карты (число, например: 2026)
@@ -118,12 +119,9 @@ class MasterProfileView(APIView):
         - Категории должны существовать в базе данных и иметь тип 'by_master'
         - После создания мастерской, user автоматически добавляется в группу 'Master'
         - Можно создать мастерскую вообще без данных и заполнить потом через PUT/PATCH
-        - Для загрузки изображений используйте multipart/form-data формат
+        - Изображения добавляются отдельно через POST /api/master/images/ после создания мастера
         """,
-        request={
-            'multipart/form-data': MasterCreateSerializer,
-            'application/json': MasterCreateSerializer,
-        },
+        request=MasterCreateSerializer,
         examples=[
             OpenApiExample(
                 'Полный пример создания мастерской',
@@ -182,17 +180,7 @@ class MasterProfileView(APIView):
     )
     def post(self, request):
         """Создание профиля мастера (ТОЛЬКО для Owner)"""
-        # Обрабатываем multipart/form-data для images
-        data = request.data.copy()
-        
-        # Обрабатываем images из request.FILES
-        if request.FILES:
-            images = request.FILES.getlist('images')
-            if images:
-                # Добавляем images в data как список
-                data.setlist('images', images)
-        
-        serializer = MasterCreateSerializer(data=data, context={'request': request})
+        serializer = MasterCreateSerializer(data=request.data, context={'request': request})
         if serializer.is_valid():
             master = serializer.save()
             response_serializer = MasterSerializer(master, context={'request': request})
@@ -523,6 +511,7 @@ class MasterDetailsView(APIView):
         
         Все поля необязательны, можно обновить только нужные поля:
         
+        - `name`: Название мастерской (строка)
         - `city`: Город мастерской (строка)
         - `address`: Адрес мастерской (строка)
         - `phone`: Номер телефона мастерской (строка)
@@ -537,12 +526,12 @@ class MasterDetailsView(APIView):
         - `card_expiry_year`: Год истечения срока карты (число)
         - `card_cvv`: CVV код карты (строка, 3-4 цифры)
         
-        **Примечание**: При загрузке новых изображений старые изображения будут удалены и заменены новыми.
+        **Примечание**: Изображения обновляются через отдельные endpoint'ы:
+        - POST /api/master/images/ - добавить изображения
+        - PUT /api/master/images/{image_id}/ - заменить изображение
+        - DELETE /api/master/images/{image_id}/ - удалить изображение
         """,
-        request={
-            'multipart/form-data': MasterUpdateSerializer,
-            'application/json': MasterUpdateSerializer,
-        },
+        request=MasterUpdateSerializer,
         responses={
             200: MasterSerializer,
             400: {'type': 'object', 'properties': {'detail': {'type': 'string'}}},
@@ -560,21 +549,11 @@ class MasterDetailsView(APIView):
                 status=status.HTTP_404_NOT_FOUND
             )
         
-        # Обрабатываем multipart/form-data для images
-        data = request.data.copy()
-        if request.FILES:
-            images = request.FILES.getlist('images')
-            if images:
-                # Добавляем images в data как список
-                if hasattr(data, 'setlist'):
-                    data.setlist('images', images)
-                else:
-                    data['images'] = images
-        
-        serializer = MasterUpdateSerializer(master, data=data, context={'request': request})
+        serializer = MasterUpdateSerializer(master, data=request.data, context={'request': request})
         if serializer.is_valid():
-            serializer.save()
-            return Response(serializer.data, status=status.HTTP_200_OK)
+            updated_master = serializer.save()
+            response_serializer = MasterSerializer(updated_master, context={'request': request})
+            return Response(response_serializer.data, status=status.HTTP_200_OK)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
     
     @extend_schema(
@@ -588,6 +567,7 @@ class MasterDetailsView(APIView):
         
         Можно обновить только нужные поля, не передавая все остальные:
         
+        - `name`: Название мастерской (строка)
         - `city`: Город мастерской (строка)
         - `address`: Адрес мастерской (строка)
         - `phone`: Номер телефона мастерской (строка)
@@ -602,12 +582,12 @@ class MasterDetailsView(APIView):
         - `card_expiry_year`: Год истечения срока карты (число)
         - `card_cvv`: CVV код карты (строка, 3-4 цифры)
         
-        **Примечание**: При загрузке новых изображений старые изображения будут удалены и заменены новыми.
+        **Примечание**: Изображения обновляются через отдельные endpoint'ы:
+        - POST /api/master/images/ - добавить изображения
+        - PUT /api/master/images/{image_id}/ - заменить изображение
+        - DELETE /api/master/images/{image_id}/ - удалить изображение
         """,
-        request={
-            'multipart/form-data': MasterUpdateSerializer,
-            'application/json': MasterUpdateSerializer,
-        },
+        request=MasterUpdateSerializer,
         responses={
             200: MasterSerializer,
             400: {'type': 'object', 'properties': {'detail': {'type': 'string', 'example': 'Ошибка валидации данных'}}},
@@ -625,21 +605,11 @@ class MasterDetailsView(APIView):
                 status=status.HTTP_404_NOT_FOUND
             )
         
-        # Обрабатываем multipart/form-data для images
-        data = request.data.copy()
-        if request.FILES:
-            images = request.FILES.getlist('images')
-            if images:
-                # Добавляем images в data как список
-                if hasattr(data, 'setlist'):
-                    data.setlist('images', images)
-                else:
-                    data['images'] = images
-        
-        serializer = MasterUpdateSerializer(master, data=data, partial=True, context={'request': request})
+        serializer = MasterUpdateSerializer(master, data=request.data, partial=True, context={'request': request})
         if serializer.is_valid():
-            serializer.save()
-            return Response(serializer.data, status=status.HTTP_200_OK)
+            updated_master = serializer.save()
+            response_serializer = MasterSerializer(updated_master, context={'request': request})
+            return Response(response_serializer.data, status=status.HTTP_200_OK)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
     
     @extend_schema(
@@ -1492,3 +1462,464 @@ GET /api/master/masters/by-user/?service_items=Шиномонтаж&category=1&c
         
         serializer = MasterSerializer(masters, many=True, context={'request': request})
         return Response(serializer.data, status=status.HTTP_200_OK)
+
+
+class AddServiceItemsView(APIView):
+    """
+    API для добавления услуг к существующему мастеру через master_id
+    """
+    permission_classes = [IsAuthenticated]
+    
+    @extend_schema(
+        summary="Добавить услуги к мастеру",
+        description="""
+        Добавление новых услуг к существующему мастеру по его ID.
+        
+        **Логика работы:**
+        1. Находим MasterService по master_id
+        2. Если не найден - создаем новый MasterService
+        3. Добавляем новые MasterServiceItems к этому MasterService
+        
+        **Request Body:**
+        ```json
+        {
+          "master_id": 1,
+          "services": [
+            {
+              "name": "Замена масла",
+              "price_from": 1000,
+              "price_to": 2000,
+              "category": 1
+            },
+            {
+              "name": "Диагностика",
+              "price_from": 500,
+              "price_to": 1500,
+              "category": 2
+            }
+          ]
+        }
+        ```
+        """,
+        request=AddServiceItemsSerializer,
+        responses={
+            201: MasterServiceSerializer,
+            400: {'type': 'object', 'properties': {'error': {'type': 'string'}}},
+            404: {'type': 'object', 'properties': {'error': {'type': 'string'}}}
+        },
+        tags=['Master Service Items']
+    )
+    def post(self, request):
+        """Добавить услуги к мастеру"""
+        from .serializers import AddServiceItemsSerializer, MasterServiceSerializer
+        
+        serializer = AddServiceItemsSerializer(data=request.data)
+        if not serializer.is_valid():
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        
+        master_id = serializer.validated_data['master_id']
+        services = serializer.validated_data['services']
+        
+        # Получаем мастера
+        try:
+            master = Master.objects.get(id=master_id)
+        except Master.DoesNotExist:
+            return Response(
+                {'error': 'Мастер не найден'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+        
+        # Находим или создаем MasterService для этого мастера
+        master_service = MasterService.objects.filter(master=master).first()
+        if not master_service:
+            master_service = MasterService.objects.create(master=master)
+        
+        # Добавляем все услуги
+        created_items = []
+        for service_data in services:
+            item = MasterServiceItems.objects.create(
+                master_service=master_service,
+                name=service_data['name'],
+                price_from=service_data['price_from'],
+                price_to=service_data['price_to'],
+                category_id=service_data['category']
+            )
+            created_items.append(item)
+        
+        # Возвращаем обновленный MasterService
+        response_serializer = MasterServiceSerializer(master_service, context={'request': request})
+        return Response(response_serializer.data, status=status.HTTP_201_CREATED)
+
+
+class UpdateServiceItemView(APIView):
+    """
+    API для обновления конкретной услуги (MasterServiceItems)
+    """
+    permission_classes = [IsAuthenticated]
+    
+    def get_object(self, item_id):
+        """Получить элемент услуги"""
+        try:
+            return MasterServiceItems.objects.get(id=item_id)
+        except MasterServiceItems.DoesNotExist:
+            return None
+    
+    @extend_schema(
+        summary="Обновить услугу по ID",
+        description="""
+        Обновление конкретной услуги мастера по её ID.
+        
+        **Request Body:**
+        ```json
+        {
+          "name": "Замена масла и фильтров",
+          "price_from": 1200,
+          "price_to": 2500,
+          "category": 1
+        }
+        ```
+        """,
+        request=UpdateServiceItemSerializer,
+        responses={
+            200: MasterServiceItemsSerializer,
+            400: {'type': 'object', 'properties': {'error': {'type': 'string'}}},
+            404: {'type': 'object', 'properties': {'error': {'type': 'string'}}}
+        },
+        tags=['Master Service Items']
+    )
+    def put(self, request, item_id):
+        """Обновить услугу"""
+        from .serializers import UpdateServiceItemSerializer
+        
+        item = self.get_object(item_id)
+        if not item:
+            return Response(
+                {'error': 'Услуга не найдена'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+        
+        serializer = UpdateServiceItemSerializer(item, data=request.data, context={'request': request})
+        if serializer.is_valid():
+            serializer.save()
+            return Response(serializer.data, status=status.HTTP_200_OK)
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+
+class DeleteServiceItemView(APIView):
+    """
+    API для удаления конкретной услуги (MasterServiceItems)
+    """
+    permission_classes = [IsAuthenticated]
+    
+    def get_object(self, item_id):
+        """Получить элемент услуги"""
+        try:
+            return MasterServiceItems.objects.get(id=item_id)
+        except MasterServiceItems.DoesNotExist:
+            return None
+    
+    @extend_schema(
+        summary="Удалить услугу по ID",
+        description="Удаление конкретной услуги мастера по её ID.",
+        responses={
+            204: {'description': 'Услуга успешно удалена'},
+            404: {'type': 'object', 'properties': {'error': {'type': 'string'}}}
+        },
+        tags=['Master Service Items']
+    )
+    def delete(self, request, item_id):
+        """Удалить услугу"""
+        item = self.get_object(item_id)
+        if not item:
+            return Response(
+                {'error': 'Услуга не найдена'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+        
+        item.delete()
+        return Response(
+            {'message': 'Услуга успешно удалена'},
+            status=status.HTTP_204_NO_CONTENT
+        )
+
+
+class AddMasterImagesView(APIView):
+    """
+    API для добавления новых изображений к мастеру
+    """
+    permission_classes = [IsAuthenticated]
+    
+    @extend_schema(
+        summary="Добавить изображения к мастеру",
+        description="""
+        Добавление новых изображений к существующему мастеру.
+        
+        **Важные моменты:**
+        - Можно загрузить сразу несколько изображений (multiple files)
+        - Старые изображения **сохраняются** - новые добавляются к существующим
+        - Формат запроса: `multipart/form-data`
+        - Поддерживаемые форматы: JPG, PNG, GIF, WEBP
+        
+        **Request Body (multipart/form-data):**
+        - `master_id`: ID мастера (integer, обязательно)
+        - `images`: Список изображений (multiple files, обязательно)
+        
+        **Пример использования в curl:**
+        ```bash
+        curl -X POST "http://localhost:8000/api/master/images/" \\
+          -H "Authorization: Bearer YOUR_TOKEN" \\
+          -F "master_id=1" \\
+          -F "images=@photo1.jpg" \\
+          -F "images=@photo2.jpg" \\
+          -F "images=@photo3.jpg"
+        ```
+        
+        **Ответ:** Возвращает обновленный список всех изображений мастера.
+        """,
+        request={
+            'multipart/form-data': {
+                'type': 'object',
+                'properties': {
+                    'master_id': {
+                        'type': 'integer',
+                        'description': 'ID мастера'
+                    },
+                    'images': {
+                        'type': 'array',
+                        'items': {
+                            'type': 'string',
+                            'format': 'binary'
+                        },
+                        'description': 'Список изображений для загрузки'
+                    }
+                },
+                'required': ['master_id', 'images']
+            }
+        },
+        responses={
+            201: {
+                'description': 'Изображения успешно добавлены',
+                'content': {
+                    'application/json': {
+                        'example': {
+                            'message': 'Успешно добавлено 2 изображений',
+                            'images': [
+                                {
+                                    'id': 1,
+                                    'image': 'http://localhost:8000/media/master_images/photo1.jpg',
+                                    'created_at': '2026-01-27T20:00:00Z',
+                                    'updated_at': '2026-01-27T20:00:00Z'
+                                }
+                            ]
+                        }
+                    }
+                }
+            },
+            400: {'type': 'object', 'properties': {'error': {'type': 'string'}}},
+            404: {'type': 'object', 'properties': {'error': {'type': 'string'}}}
+        },
+        tags=['Master Images']
+    )
+    def post(self, request):
+        """Добавить изображения к мастеру"""
+        # Обрабатываем multipart/form-data
+        data = {}
+        
+        # Получаем master_id из data
+        if 'master_id' in request.data:
+            data['master_id'] = request.data.get('master_id')
+        
+        # Получаем изображения из FILES
+        if request.FILES:
+            images = request.FILES.getlist('images')
+            if images:
+                data['images'] = images
+            else:
+                return Response(
+                    {'error': 'Не загружены изображения'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+        else:
+            return Response(
+                {'error': 'Не загружены изображения'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        serializer = AddMasterImagesSerializer(data=data)
+        if not serializer.is_valid():
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        
+        master_id = serializer.validated_data['master_id']
+        images = serializer.validated_data['images']
+        
+        # Получаем мастера
+        try:
+            master = Master.objects.get(id=master_id)
+        except Master.DoesNotExist:
+            return Response(
+                {'error': 'Мастер не найден'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+        
+        # Добавляем изображения
+        created_images = []
+        for image in images:
+            img = MasterImage.objects.create(master=master, image=image)
+            created_images.append(img)
+        
+        # Возвращаем все изображения мастера
+        all_images = MasterImage.objects.filter(master=master)
+        images_serializer = MasterImageSerializer(all_images, many=True, context={'request': request})
+        
+        return Response({
+            'message': f'Успешно добавлено {len(created_images)} изображений',
+            'images': images_serializer.data
+        }, status=status.HTTP_201_CREATED)
+
+
+class UpdateMasterImageView(APIView):
+    """
+    API для замены конкретного изображения мастера
+    """
+    permission_classes = [IsAuthenticated]
+    
+    def get_object(self, image_id):
+        """Получить изображение"""
+        try:
+            return MasterImage.objects.get(id=image_id)
+        except MasterImage.DoesNotExist:
+            return None
+    
+    @extend_schema(
+        summary="Заменить изображение мастера",
+        description="""
+        Замена существующего изображения мастера на новое.
+        
+        **Важные моменты:**
+        - Старое изображение будет **удалено** (файл и запись из БД)
+        - Новое изображение загрузится на его место
+        - Формат запроса: `multipart/form-data`
+        - Поддерживаемые форматы: JPG, PNG, GIF, WEBP
+        
+        **Request Body (multipart/form-data):**
+        - `image`: Новое изображение (file, обязательно)
+        
+        **Пример использования в curl:**
+        ```bash
+        curl -X PUT "http://localhost:8000/api/master/images/5/" \\
+          -H "Authorization: Bearer YOUR_TOKEN" \\
+          -F "image=@new_photo.jpg"
+        ```
+        
+        **Ответ:** Возвращает информацию об обновленном изображении.
+        """,
+        request={
+            'multipart/form-data': {
+                'type': 'object',
+                'properties': {
+                    'image': {
+                        'type': 'string',
+                        'format': 'binary',
+                        'description': 'Новое изображение'
+                    }
+                },
+                'required': ['image']
+            }
+        },
+        responses={
+            200: {
+                'description': 'Изображение успешно обновлено',
+                'content': {
+                    'application/json': {
+                        'example': {
+                            'id': 1,
+                            'image': 'http://localhost:8000/media/master_images/new_photo.jpg',
+                            'created_at': '2026-01-27T20:00:00Z',
+                            'updated_at': '2026-01-27T20:15:00Z'
+                        }
+                    }
+                }
+            },
+            400: {'type': 'object', 'properties': {'error': {'type': 'string'}}},
+            404: {'type': 'object', 'properties': {'error': {'type': 'string'}}}
+        },
+        tags=['Master Images']
+    )
+    def put(self, request, image_id):
+        """Заменить изображение"""
+        image_obj = self.get_object(image_id)
+        if not image_obj:
+            return Response(
+                {'error': 'Изображение не найдено'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+        
+        serializer = UpdateMasterImageSerializer(image_obj, data=request.data, context={'request': request})
+        if serializer.is_valid():
+            # Удаляем старое изображение из storage
+            if image_obj.image:
+                image_obj.image.delete(save=False)
+            
+            # Сохраняем новое изображение
+            updated_image = serializer.save()
+            
+            # Возвращаем обновленные данные
+            response_serializer = MasterImageSerializer(updated_image, context={'request': request})
+            return Response(response_serializer.data, status=status.HTTP_200_OK)
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+
+class DeleteMasterImageView(APIView):
+    """
+    API для удаления конкретного изображения мастера
+    """
+    permission_classes = [IsAuthenticated]
+    
+    def get_object(self, image_id):
+        """Получить изображение"""
+        try:
+            return MasterImage.objects.get(id=image_id)
+        except MasterImage.DoesNotExist:
+            return None
+    
+    @extend_schema(
+        summary="Удалить изображение мастера",
+        description="""
+        Удаление конкретного изображения мастера по его ID.
+        
+        **Важные моменты:**
+        - Изображение будет **полностью удалено** (файл из storage и запись из БД)
+        - Эта операция необратима
+        - Другие изображения мастера не затрагиваются
+        
+        **Пример использования в curl:**
+        ```bash
+        curl -X DELETE "http://localhost:8000/api/master/images/5/" \\
+          -H "Authorization: Bearer YOUR_TOKEN"
+        ```
+        
+        **Ответ:** 204 No Content при успешном удалении
+        """,
+        responses={
+            204: {'description': 'Изображение успешно удалено'},
+            404: {'type': 'object', 'properties': {'error': {'type': 'string', 'example': 'Изображение не найдено'}}}
+        },
+        tags=['Master Images']
+    )
+    def delete(self, request, image_id):
+        """Удалить изображение"""
+        image = self.get_object(image_id)
+        if not image:
+            return Response(
+                {'error': 'Изображение не найдено'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+        
+        # Удаляем файл и запись из БД
+        image.image.delete()  # Удаляет файл из storage
+        image.delete()  # Удаляет запись из БД
+        
+        return Response(
+            {'message': 'Изображение успешно удалено'},
+            status=status.HTTP_204_NO_CONTENT
+        )

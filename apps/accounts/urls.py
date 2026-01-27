@@ -6,8 +6,6 @@ from .views import (
 )
 
 urlpatterns = [
-    # Health check
-    path('health/', HealthCheckView.as_view(), name='health_check'),
     
     # Login (SMS kod yuborish)
     path('login/', LoginView.as_view(), name='login'),
