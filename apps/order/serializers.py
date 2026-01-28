@@ -222,6 +222,68 @@ class OrderCreateSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError('Долгота должна быть между -180 и 180')
         return value
     
+    def validate(self, attrs):
+        """
+        Общая валидация данных заказа
+        Проверяет расстояние между заказом и мастером (если указан master_id)
+        """
+        master_id = attrs.get('master_id')
+        order_lat = attrs.get('latitude')
+        order_lon = attrs.get('longitude')
+        
+        # Если указан master_id, проверяем расстояние
+        if master_id and order_lat and order_lon:
+            try:
+                master = Master.objects.get(id=master_id)
+                
+                # Проверяем, есть ли у мастера координаты
+                if not master.latitude or not master.longitude:
+                    raise serializers.ValidationError({
+                        'master_id': 'У выбранного мастера не указаны координаты. Пожалуйста, выберите другого мастера.'
+                    })
+                
+                # Вычисляем расстояние по формуле Haversine
+                from math import radians, sin, cos, sqrt, atan2
+                
+                R = 6371.0  # Радиус Земли в километрах
+                
+                # Координаты мастера
+                master_lat = float(master.latitude)
+                master_lon = float(master.longitude)
+                
+                # Координаты заказа
+                lat1 = float(order_lat)
+                lon1 = float(order_lon)
+                
+                # Конвертируем в радианы
+                lat1_rad = radians(lat1)
+                lon1_rad = radians(lon1)
+                lat2_rad = radians(master_lat)
+                lon2_rad = radians(master_lon)
+                
+                # Формула Haversine
+                dlat = lat2_rad - lat1_rad
+                dlon = lon2_rad - lon1_rad
+                
+                a = sin(dlat / 2)**2 + cos(lat1_rad) * cos(lat2_rad) * sin(dlon / 2)**2
+                c = 2 * atan2(sqrt(a), sqrt(1 - a))
+                distance = R * c
+                
+                # Проверяем, что расстояние не больше 50 км
+                MAX_DISTANCE = 50  # км
+                if distance > MAX_DISTANCE:
+                    raise serializers.ValidationError({
+                        'master_id': f'Выбранный мастер находится слишком далеко ({distance:.1f} км). '
+                                   f'Максимальное расстояние: {MAX_DISTANCE} км. '
+                                   f'Пожалуйста, выберите мастера ближе к вашему местоположению.'
+                    })
+                
+            except Master.DoesNotExist:
+                # Эта ошибка уже обрабатывается в validate_master_id
+                pass
+        
+        return attrs
+    
     def create(self, validated_data):
         """Создание заказа с машинами, категориями и мастерами"""
         # Извлекаем списки ID
