@@ -891,14 +891,98 @@ class OrdersByUserView(APIView):
     
     @extend_schema(
         summary="Получить заказы текущего пользователя",
-        description="Возвращает все заказы текущего авторизованного пользователя (user берется из header). "
-                  "Фильтрует заказы по полю user в модели Order. "
-                  "Поддерживает пагинацию (по умолчанию 10 заказов на страницу).",
+        description="""
+## Описание
+Возвращает все заказы текущего авторизованного пользователя (user берется из header/token).
+
+## Фильтры (все необязательные)
+
+### 1. Статус заказа (status)
+- Значения: pending, in_progress, completed, cancelled, rejected
+- Пример: `status=in_progress`
+
+### 2. Приоритет (priority)
+- Значения: low (низкий), high (высокий)
+- Пример: `priority=high`
+
+### 3. Тип проблемы (category)
+- ID категории типа **by_order**
+- Использует **smart filter** через service_type
+- Пример: `category=1` (где 1 - это "Пробито колесо", service_type="Шиномонтаж")
+- Найдёт все заказы с похожим service_type или именем категории
+
+### 4. Район (location)
+- Поиск по адресу заказа
+- Пример: `location=Ташкент` или `location=Навои`
+- Поиск нечувствителен к регистру
+
+### 5. Тип ТС (car_category)
+- ID категории машины типа **by_car**
+- Прямой фильтр по ID
+- Пример: `car_category=3` (где 3 - это "Легковой")
+
+### 6. Тип заказа (order_type)
+- Фильтр по типу заказа
+- Значения: `scheduled` (запланированный) или `sos` (экстренный)
+- Пример: `order_type=scheduled` - показывает только запланированные заказы
+- Пример: `order_type=sos` - показывает только SOS заказы
+
+### 7. Имя мастера (name)
+- Поиск по имени мастера
+- Пример: `name=Алексей`
+
+## Pagination
+- По умолчанию 10 заказов на страницу
+- Можно изменить через `page_size` (макс. 100)
+
+## Примеры запросов
+
+**Базовый:**
+```
+GET /api/order/by-user/
+```
+
+**С фильтром по статусу:**
+```
+GET /api/order/by-user/?status=in_progress
+```
+
+**С фильтром по проблеме (smart filter):**
+```
+GET /api/order/by-user/?category=1
+```
+
+**С несколькими фильтрами:**
+```
+GET /api/order/by-user/?status=pending&priority=high&category=1&location=Ташкент
+```
+
+**Только запланированные заказы (Order by Date):**
+```
+GET /api/order/by-user/?order_type=scheduled
+```
+
+**Только SOS заказы (экстренные):**
+```
+GET /api/order/by-user/?order_type=sos
+```
+
+**Запланированные заказы со статусом pending:**
+```
+GET /api/order/by-user/?order_type=scheduled&status=pending
+```
+        """,
         tags=['Orders'],
         parameters=[
-            {'name': 'name', 'in': 'query', 'description': 'Опциональный фильтр по имени мастера', 'type': 'string', 'required': False},
-            {'name': 'page', 'in': 'query', 'description': 'Номер страницы', 'type': 'integer', 'required': False},
-            {'name': 'page_size', 'in': 'query', 'description': 'Количество заказов на странице (макс. 100)', 'type': 'integer', 'required': False},
+            OpenApiParameter(name='status', type=OpenApiTypes.STR, location=OpenApiParameter.QUERY, description='Фильтр по статусу заказа', required=False, enum=[choice[0] for choice in OrderStatus.choices]),
+            OpenApiParameter(name='priority', type=OpenApiTypes.STR, location=OpenApiParameter.QUERY, description='Фильтр по приоритету (low, high)', required=False, enum=['low', 'high']),
+            OpenApiParameter(name='category', type=OpenApiTypes.INT, location=OpenApiParameter.QUERY, description='Фильтр по типу проблемы. ID категории типа by_order. Использует smart filter через service_type.', required=False),
+            OpenApiParameter(name='location', type=OpenApiTypes.STR, location=OpenApiParameter.QUERY, description='Фильтр по району (поиск по адресу заказа)', required=False),
+            OpenApiParameter(name='car_category', type=OpenApiTypes.INT, location=OpenApiParameter.QUERY, description='Фильтр по типу ТС (ID категории машины типа by_car)', required=False),
+            OpenApiParameter(name='order_type', type=OpenApiTypes.STR, location=OpenApiParameter.QUERY, description='Фильтр по типу заказа (scheduled - запланированные, sos - экстренные)', required=False, enum=['scheduled', 'sos']),
+            OpenApiParameter(name='name', type=OpenApiTypes.STR, location=OpenApiParameter.QUERY, description='Поиск по имени мастера', required=False),
+            OpenApiParameter(name='page', type=OpenApiTypes.INT, location=OpenApiParameter.QUERY, description='Номер страницы для пагинации', required=False),
+            OpenApiParameter(name='page_size', type=OpenApiTypes.INT, location=OpenApiParameter.QUERY, description='Количество заказов на странице (макс. 100)', required=False),
         ],
         responses={
             200: OrderSerializer(many=True),
@@ -906,9 +990,71 @@ class OrdersByUserView(APIView):
         }
     )
     def get(self, request):
-        """Получить заказы текущего пользователя с опциональным фильтром по имени мастера"""
-        orders = Order.objects.filter(user=request.user).order_by('-created_at')
-        # name: фильтр по имени мастера (optional)
+        """Получить заказы текущего пользователя"""
+        orders = Order.objects.filter(user=request.user)
+        
+        # Фильтр по статусу
+        status_filter = request.query_params.get('status')
+        if status_filter:
+            orders = orders.filter(status=status_filter)
+        
+        # Фильтр по приоритету
+        priority_filter = request.query_params.get('priority')
+        if priority_filter:
+            orders = orders.filter(priority=priority_filter)
+        
+        # Фильтр по типу заказа (scheduled или sos)
+        order_type_filter = request.query_params.get('order_type')
+        if order_type_filter:
+            if order_type_filter in ['scheduled', 'sos']:
+                orders = orders.filter(order_type=order_type_filter)
+        
+        # Smart фильтр по категории проблемы (Тип проблемы)
+        category_filter = request.query_params.get('category')
+        if category_filter:
+            try:
+                from apps.categories.models import Category
+                category_id = int(category_filter)
+                category = Category.objects.get(id=category_id)
+                
+                # Если это by_order категория - используем smart filter через service_type
+                if category.type_category == 'by_order':
+                    category_conditions = Q()
+                    
+                    if category.service_type:
+                        # Ищем заказы с похожим service_type
+                        category_conditions |= Q(category__service_type__icontains=category.service_type)
+                    
+                    if category.name:
+                        # Также ищем по имени категории
+                        category_conditions |= Q(category__name__icontains=category.name)
+                    
+                    if category_conditions:
+                        orders = orders.filter(category_conditions)
+                else:
+                    # Для других типов - прямой фильтр по ID
+                    orders = orders.filter(category__id=category_id)
+                    
+            except Category.DoesNotExist:
+                pass
+            except (ValueError, TypeError):
+                pass
+        
+        # Фильтр по району/местоположению (Районы)
+        location_filter = request.query_params.get('location')
+        if location_filter:
+            orders = orders.filter(location__icontains=location_filter)
+        
+        # Фильтр по типу ТС (категория машины)
+        car_category_filter = request.query_params.get('car_category')
+        if car_category_filter:
+            try:
+                car_category_id = int(car_category_filter)
+                orders = orders.filter(car__category__id=car_category_id)
+            except (ValueError, TypeError):
+                pass
+        
+        # Фильтр по имени мастера
         name = request.query_params.get('name')
         if name:
             orders = orders.filter(
@@ -916,6 +1062,9 @@ class OrdersByUserView(APIView):
                 Q(master__user__last_name__icontains=name) |
                 Q(master__user__get_full_name__icontains=name)
             )
+        
+        # Убираем дубликаты и сортируем
+        orders = orders.distinct().order_by('-created_at')
         
         # Применяем пагинацию
         paginator = self.pagination_class()
