@@ -251,9 +251,6 @@ class SOSOrderCreateView(APIView):
 - **latitude**: текущая широта клиента (от -90 до 90)
 - **longitude**: текущая долгота клиента (от -180 до 180)
 
-### Необязательные:
-- **master_id**: можно не указывать (система сама найдет ближайших мастеров)
-
 ## ⚠️ Автоматическая обработка:
 
 1. **Приоритет устанавливается клиентом** - клиент выбирает "Низкий" или "Высокий" приоритет
@@ -291,20 +288,6 @@ class SOSOrderCreateView(APIView):
 }
 ```
 
-### Пример 3: С указанием конкретного мастера (высокий приоритет)
-```json
-{
-  "order_type": "sos",
-  "priority": "high",
-  "master_id": 7,
-  "text": "Перегрев двигателя, едет пар из-под капота",
-  "location": "ул. Мирабад, возле дома 12",
-  "latitude": 41.3100,
-  "longitude": 69.2750,
-  "car_list": [1],
-  "category_list": [6]
-}
-```
 
 ## 🎯 Workflow:
 
@@ -329,8 +312,7 @@ class SOSOrderCreateView(APIView):
                     'latitude': {'type': 'number', 'description': 'Текущая широта (GPS)', 'example': 41.2548},
                     'longitude': {'type': 'number', 'description': 'Текущая долгота (GPS)', 'example': 69.2107},
                     'car_list': {'type': 'array', 'items': {'type': 'integer'}, 'description': 'Список ID машин', 'example': [2]},
-                    'category_list': {'type': 'array', 'items': {'type': 'integer'}, 'description': 'Список ID категорий проблем', 'example': [1]},
-                    'master_id': {'type': 'integer', 'description': 'ID конкретного мастера (необязательно)', 'example': 7}
+                    'category_list': {'type': 'array', 'items': {'type': 'integer'}, 'description': 'Список ID категорий проблем', 'example': [1]}
                 }
             }
         },
