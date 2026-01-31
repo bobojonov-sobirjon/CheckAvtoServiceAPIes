@@ -518,3 +518,40 @@ class AddServicesToOrderSerializer(serializers.Serializer):
             )
         
         return value
+
+
+class AddMastersToOrderSerializer(serializers.Serializer):
+    """Сериализатор для добавления мастеров к заказу"""
+    order_id = serializers.IntegerField(
+        help_text='ID заказа'
+    )
+    master_ids = serializers.ListField(
+        child=serializers.IntegerField(),
+        allow_empty=False,
+        help_text='Список ID пользователей-мастеров [1, 2, 3, ...]'
+    )
+    
+    def validate_order_id(self, value):
+        """Проверка существования заказа"""
+        try:
+            Order.objects.get(id=value)
+        except Order.DoesNotExist:
+            raise serializers.ValidationError(f'Заказ с ID {value} не найден')
+        return value
+    
+    def validate_master_ids(self, value):
+        """Проверка существования пользователей"""
+        if not value:
+            raise serializers.ValidationError('Список master_ids не может быть пустым')
+        
+        # Проверяем существование всех пользователей
+        existing_users = User.objects.filter(id__in=value)
+        existing_ids = set(existing_users.values_list('id', flat=True))
+        
+        invalid_ids = set(value) - existing_ids
+        if invalid_ids:
+            raise serializers.ValidationError(
+                f'Пользователи с ID {list(invalid_ids)} не найдены'
+            )
+        
+        return value

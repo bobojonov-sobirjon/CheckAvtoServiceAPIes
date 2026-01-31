@@ -14,7 +14,7 @@ from drf_spectacular.types import OpenApiTypes
 from .models import Order, OrderStatus, OrderType, Rating, OrderService
 from .serializers import (
     OrderSerializer, OrderCreateSerializer, OrderUpdateSerializer, RatingSerializer,
-    AddServicesToOrderSerializer, OrderServiceSerializer
+    AddServicesToOrderSerializer, OrderServiceSerializer, AddMastersToOrderSerializer
 )
 from .permissions import IsOrderOwnerOrMaster, IsOrderOwner, IsMaster
 from apps.master.models import Master
@@ -2174,3 +2174,86 @@ GET /api/order/services-list/?master_id=5
         # Сериализуем
         serializer = MasterServiceItemsSerializer(service_items, many=True)
         return Response(serializer.data)
+
+
+class AddMastersToOrderView(APIView):
+    """
+    API для добавления мастеров к заказу
+    """
+    permission_classes = [IsAuthenticated]
+    
+    @extend_schema(
+        summary="Добавить мастеров к заказу",
+        description="""
+## Описание
+Добавляет выбранных пользователей-мастеров к заказу.
+Эти мастера будут назначены на заказ и получат уведомление.
+
+## Request Body
+- `order_id`: ID заказа (обязательно)
+- `master_ids`: Список ID пользователей-мастеров [1, 2, 3, ...] (обязательно)
+
+## Пример запроса:
+```json
+{
+  "order_id": 5,
+  "master_ids": [1, 2, 3]
+}
+```
+
+## Response
+Возвращает обновленный заказ со списком назначенных мастеров.
+
+## 🎯 Когда использовать?
+- Когда нужно назначить несколько мастеров на один заказ
+- Когда мастер хочет делегировать заказ своим сотрудникам
+- Для командной работы над сложным заказом
+        """,
+        tags=['Orders'],
+        request=AddMastersToOrderSerializer,
+        responses={
+            200: OrderSerializer,
+            400: {
+                'type': 'object',
+                'properties': {'error': {'type': 'string'}},
+                'example': {'error': 'Заказ с ID 999 не найден'}
+            },
+            404: {
+                'type': 'object',
+                'properties': {'error': {'type': 'string'}},
+                'example': {'error': 'Заказ не найден'}
+            },
+            401: {'type': 'object', 'properties': {'detail': {'type': 'string'}}},
+        }
+    )
+    def post(self, request):
+        """Добавить мастеров к заказу"""
+        serializer = AddMastersToOrderSerializer(data=request.data)
+        
+        if not serializer.is_valid():
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        
+        order_id = serializer.validated_data['order_id']
+        master_ids = serializer.validated_data['master_ids']
+        
+        # Получаем заказ
+        try:
+            order = Order.objects.get(id=order_id)
+        except Order.DoesNotExist:
+            return Response(
+                {'error': f'Заказ с ID {order_id} не найден'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+        
+        # Добавляем мастеров к заказу (ManyToMany)
+        for master_id in master_ids:
+            try:
+                user = User.objects.get(id=master_id)
+                order.masters.add(user)
+            except User.DoesNotExist:
+                continue
+        
+        # Возвращаем обновленный заказ
+        order.refresh_from_db()
+        result_serializer = OrderSerializer(order, context={'request': request})
+        return Response(result_serializer.data, status=status.HTTP_200_OK)

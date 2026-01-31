@@ -10,7 +10,7 @@ from .serializers import (
     MasterSerializer, MasterCreateSerializer, MasterUpdateSerializer, MasterNearbySerializer,
     MasterServiceSerializer, MasterServiceItemsSerializer, MasterEmployeeCreateSerializer,
     AddServiceItemsSerializer, UpdateServiceItemSerializer, AddMasterImagesSerializer, 
-    UpdateMasterImageSerializer, MasterImageSerializer
+    UpdateMasterImageSerializer, MasterImageSerializer, MasterEmployeeSerializer
 )
 from .permissions import IsMasterGroup, IsOwnerGroup
 from django.contrib.auth import get_user_model
@@ -1919,3 +1919,123 @@ class DeleteMasterImageView(APIView):
             {'message': 'Изображение успешно удалено'},
             status=status.HTTP_204_NO_CONTENT
         )
+
+
+class MasterEmployeeListView(APIView):
+    """
+    API для получения списка сотрудников мастерской
+    """
+    permission_classes = [IsAuthenticated]
+    
+    @extend_schema(
+        summary="Получить сотрудников мастерской",
+        description="""
+## Описание
+Возвращает список всех сотрудников (MasterEmployee) для указанного мастера/мастерской.
+
+## 🎯 Когда использовать?
+- Для просмотра всех сотрудников мастерской
+- Для отображения команды мастера в приложении
+- Для выбора конкретного сотрудника при назначении на заказ
+
+## Параметры
+- `master_id`: ID мастера/мастерской (обязательный)
+
+## Пример запроса:
+```
+GET /api/master/employees/?master_id=5
+```
+
+## Response
+Возвращает список сотрудников с полной информацией:
+- ID сотрудника
+- Полное имя
+- Email
+- Телефон
+- Аватар
+- Дата добавления в команду
+
+## 📋 Формат ответа:
+```json
+[
+  {
+    "id": 1,
+    "master": 5,
+    "master_info": {
+      "id": 5,
+      "name": "Автосервис Али",
+      "city": "Ташкент"
+    },
+    "employee": 10,
+    "employee_info": {
+      "id": 10,
+      "full_name": "Иван Петров",
+      "email": "ivan@example.com",
+      "phone_number": "+998901234567",
+      "avatar": "http://example.com/media/avatar.jpg"
+    },
+    "added_at": "2026-01-15T10:30:00Z"
+  }
+]
+```
+        """,
+        tags=['Master'],
+        parameters=[
+            OpenApiParameter(
+                name='master_id',
+                type=OpenApiTypes.INT,
+                location=OpenApiParameter.QUERY,
+                description='ID мастера/мастерской',
+                required=True
+            ),
+        ],
+        responses={
+            200: MasterEmployeeSerializer(many=True),
+            400: {
+                'type': 'object',
+                'properties': {'error': {'type': 'string'}},
+                'example': {'error': 'Параметр master_id обязателен'}
+            },
+            404: {
+                'type': 'object',
+                'properties': {'error': {'type': 'string'}},
+                'example': {'error': 'Мастер не найден'}
+            },
+            401: {'type': 'object', 'properties': {'detail': {'type': 'string'}}},
+        }
+    )
+    def get(self, request):
+        """Получить сотрудников мастерской"""
+        master_id = request.query_params.get('master_id')
+        
+        if not master_id:
+            return Response(
+                {'error': 'Параметр master_id обязателен'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        try:
+            master_id = int(master_id)
+        except ValueError:
+            return Response(
+                {'error': 'Неверный формат master_id'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # Проверяем существование мастера
+        try:
+            master = Master.objects.get(id=master_id)
+        except Master.DoesNotExist:
+            return Response(
+                {'error': 'Мастер не найден'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+        
+        # Получаем всех сотрудников этого мастера
+        employees = MasterEmployee.objects.filter(
+            master=master
+        ).select_related('employee', 'master').order_by('-added_at')
+        
+        # Сериализуем
+        serializer = MasterEmployeeSerializer(employees, many=True)
+        return Response(serializer.data)

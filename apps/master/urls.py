@@ -3,7 +3,8 @@ from .views import (
     MasterProfileView, MasterDetailsView, MasterListView,
     MasterEmployeeView, MasterFilterChoicesView, MastersByUserView,
     AddServiceItemsView, UpdateServiceItemView, DeleteServiceItemView,
-    AddMasterImagesView, UpdateMasterImageView, DeleteMasterImageView
+    AddMasterImagesView, UpdateMasterImageView, DeleteMasterImageView,
+    MasterEmployeeListView
 )
 
 urlpatterns = [
@@ -16,6 +17,7 @@ urlpatterns = [
     
     # Master Employees endpoints
     path('masters/employees/', MasterEmployeeView.as_view(), name='master-employees'),
+    path('employees/', MasterEmployeeListView.as_view(), name='master-employee-list'),
     
     # Master Service Items endpoints
     path('service-items/', AddServiceItemsView.as_view(), name='add-service-items'),

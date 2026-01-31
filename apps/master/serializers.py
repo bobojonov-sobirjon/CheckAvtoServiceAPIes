@@ -792,3 +792,36 @@ class UpdateServiceItemSerializer(serializers.ModelSerializer):
         if not Category.objects.filter(id=value.id).exists():
             raise serializers.ValidationError("Категория не найдена")
         return value
+
+
+class MasterEmployeeSerializer(serializers.ModelSerializer):
+    """Сериализатор для сотрудников мастерской"""
+    employee_info = serializers.SerializerMethodField()
+    master_info = serializers.SerializerMethodField()
+    
+    class Meta:
+        model = MasterEmployee
+        fields = ['id', 'master', 'master_info', 'employee', 'employee_info', 'added_at']
+        read_only_fields = ['id', 'added_at']
+    
+    def get_employee_info(self, obj):
+        """Получить информацию о сотруднике"""
+        if obj.employee:
+            return {
+                'id': obj.employee.id,
+                'full_name': obj.employee.get_full_name(),
+                'email': obj.employee.email,
+                'phone_number': obj.employee.phone_number,
+                'avatar': obj.employee.avatar.url if obj.employee.avatar else None
+            }
+        return None
+    
+    def get_master_info(self, obj):
+        """Получить информацию о мастере"""
+        if obj.master:
+            return {
+                'id': obj.master.id,
+                'name': obj.master.name,
+                'city': obj.master.city
+            }
+        return None
