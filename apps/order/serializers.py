@@ -23,6 +23,8 @@ class OrderSerializer(serializers.ModelSerializer):
     car_data = serializers.SerializerMethodField()
     category_data = serializers.SerializerMethodField()
     services = serializers.SerializerMethodField()
+    reviews = serializers.SerializerMethodField()
+    average_rating = serializers.SerializerMethodField()
 
     class Meta:
         model = Order
@@ -32,7 +34,7 @@ class OrderSerializer(serializers.ModelSerializer):
             'text', 'status', 'status_display', 'priority', 'priority_display',
             'location', 'latitude', 'longitude', 'master', 'masters',
             'scheduled_date', 'scheduled_time_start', 'scheduled_time_end',
-            'discount', 'services',
+            'discount', 'services', 'reviews', 'average_rating',
             'created_at', 'updated_at'
         ]
         read_only_fields = ['id', 'created_at', 'updated_at']
@@ -99,6 +101,39 @@ class OrderSerializer(serializers.ModelSerializer):
             MasterServiceItemsSerializer(os.master_service_item).data
             for os in order_services if os.master_service_item
         ]
+    
+    def get_reviews(self, obj):
+        """Получить отзывы о заказе"""
+        from .models import Review
+        
+        reviews = Review.objects.filter(order=obj).select_related('reviewer')
+        if not reviews.exists():
+            return []
+        
+        return [
+            {
+                'id': review.id,
+                'rating': review.rating,
+                'comment': review.comment,
+                'tag': review.tag,
+                'tag_display': review.get_tag_display(),
+                'reviewer': {
+                    'id': review.reviewer.id,
+                    'full_name': review.reviewer.get_full_name(),
+                    'avatar': self.context['request'].build_absolute_uri(review.reviewer.avatar.url) if review.reviewer.avatar and self.context.get('request') else None
+                } if review.reviewer else None,
+                'created_at': review.created_at
+            }
+            for review in reviews
+        ]
+    
+    def get_average_rating(self, obj):
+        """Получить средний рейтинг заказа"""
+        from django.db.models import Avg
+        from .models import Review
+        
+        avg = Review.objects.filter(order=obj).aggregate(avg_rating=Avg('rating'))
+        return round(avg['avg_rating'], 2) if avg['avg_rating'] else None
 
     def validate_latitude(self, value):
         """Валидация широты"""
