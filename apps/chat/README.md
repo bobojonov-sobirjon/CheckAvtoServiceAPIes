@@ -145,6 +145,7 @@ File, image va audio yuborish uchun **REST API** ishlatish kerak.
       "email": "ivan@example.com",
       "avatar": "http://localhost:8000/media/avatars/user.jpg"
     },
+    "sender_type": "initiator",
     "message_type": "text",
     "text": "Salom! Qalaysiz?",
     "image_url": null,
@@ -155,6 +156,10 @@ File, image va audio yuborish uchun **REST API** ishlatish kerak.
   }
 }
 ```
+
+**sender_type values:**
+- `"initiator"` - WebSocket'da message yuborgan odam doim initiator
+- `"receiver"` - REST API'da request user'ga qarab aniqlanadi
 
 ---
 
@@ -232,6 +237,7 @@ image: <binary file>
     "email": "ivan@example.com",
     "avatar": "http://localhost:8000/media/avatars/user.jpg"
   },
+  "sender_type": "initiator",
   "message_type": "image",
   "text": null,
   "image_url": "http://localhost:8000/media/chat/images/image_abc123.jpg",
@@ -769,6 +775,63 @@ audio: <binary file>
 
 ---
 
+## 👤 Sender Type
+
+Har bir message'da `sender_type` field mavjud:
+
+### WebSocket (Real-time)
+- **Message yuborgan odam doim `"initiator"`**
+- Real-time message yozgan odam o'zini initiator deb ko'radi
+
+```json
+{
+  "sender_type": "initiator"  // WebSocket'da doim
+}
+```
+
+### REST API (Message List)
+- **Request user'ga qarab aniqlanadi**
+- Chat room yaratgan odam → `"initiator"`
+- Ikkinchi ishtirokchi → `"receiver"`
+
+**Example 1:** User A chat yaratdi (initiator)
+```json
+// User A request qilsa:
+{
+  "sender": {"id": 1, "full_name": "User A"},
+  "sender_type": "initiator"  // O'zi yaratgan
+}
+
+// User B request qilsa:
+{
+  "sender": {"id": 1, "full_name": "User A"},
+  "sender_type": "receiver"   // Boshqa odam yaratgan
+}
+```
+
+**Example 2:** User B message yozdi
+```json
+// User A request qilsa:
+{
+  "sender": {"id": 2, "full_name": "User B"},
+  "sender_type": "receiver"   // Ikkinchi ishtirokchi
+}
+
+// User B request qilsa:
+{
+  "sender": {"id": 2, "full_name": "User B"},
+  "sender_type": "initiator"  // O'zi yaratgan chatda
+}
+```
+
+### Qoidalar:
+1. ✅ WebSocket: Yuboruvchi doim **initiator**
+2. ✅ REST API: Chat yaratgan → **initiator**, boshqalar → **receiver**
+3. ✅ `sender_type` har doim mavjud
+4. ✅ Frontend uchun UI'da "You" vs "Sender name" ni ko'rsatish oson
+
+---
+
 ## 🎯 Key Points
 
 1. ✅ **Text messages** → WebSocket (tezroq, real-time)
@@ -776,6 +839,7 @@ audio: <binary file>
 3. ✅ WebSocket faqat real-time notifications uchun
 4. ✅ Token query parameter orqali yuboriladi: `?token=...`
 5. ✅ Har qanday message yuborilgandan keyin WebSocket'dan notification keladi
+6. ✅ **sender_type**: WebSocket'da "initiator", REST API'da dynamic
 
 ---
 
