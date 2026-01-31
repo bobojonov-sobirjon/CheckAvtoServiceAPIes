@@ -430,40 +430,6 @@ class OrderStatusUpdateSerializer(serializers.Serializer):
         return value
 
 
-class RatingSerializer(serializers.ModelSerializer):
-    """Сериализатор для рейтинга"""
-    user_name = serializers.CharField(source='user.get_full_name', read_only=True)
-    master_name = serializers.CharField(source='master.full_name', read_only=True)
-    
-    class Meta:
-        model = Rating
-        fields = [
-            'id', 'order', 'user', 'user_name', 'master', 'master_name',
-            'rating', 'comment', 'created_at', 'updated_at'
-        ]
-        read_only_fields = ['id', 'user', 'created_at', 'updated_at']
-    
-    def validate_rating(self, value):
-        """Валидация рейтинга"""
-        if value < 1 or value > 5:
-            raise serializers.ValidationError('Рейтинг должен быть от 1 до 5')
-        return value
-    
-    def validate(self, data):
-        """Общая валидация"""
-        master = data.get('master')
-        
-        if not master:
-            raise serializers.ValidationError('Должен быть указан мастер')
-        
-        return data
-    
-    def create(self, validated_data):
-        """Создание рейтинга с автоматическим назначением пользователя"""
-        validated_data['user'] = self.context['request'].user
-        return super().create(validated_data)
-
-
 class OrderServiceSerializer(serializers.ModelSerializer):
     """Сериализатор для услуг в заказе"""
     service_details = serializers.SerializerMethodField()

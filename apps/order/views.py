@@ -13,7 +13,7 @@ from drf_spectacular.types import OpenApiTypes
 
 from .models import Order, OrderStatus, OrderType, Rating, OrderService, Review, ReviewTag
 from .serializers import (
-    OrderSerializer, OrderCreateSerializer, OrderUpdateSerializer, RatingSerializer,
+    OrderSerializer, OrderCreateSerializer, OrderUpdateSerializer,
     AddServicesToOrderSerializer, OrderServiceSerializer, AddMastersToOrderSerializer,
     ReviewSerializer, ReviewCreateSerializer
 )
@@ -1828,111 +1828,6 @@ def _get_area_filter_for_orders(request):
         'longitude__gte': min_lon,
         'longitude__lte': max_lon
     }
-
-
-class RatingCreateView(APIView):
-    """
-    API для создания рейтинга для заказа.
-    
-    POST: создание рейтинга для мастера или мастера в мастере
-    """
-    permission_classes = [IsAuthenticated]
-    
-    @extend_schema(
-        summary="Создать рейтинг",
-        description="Создает рейтинг для мастера или мастера в мастере после завершения заказа",
-        tags=['Rating'],
-        request={
-            'application/json': {
-                'type': 'object',
-                'properties': {
-                    'order': {'type': 'integer', 'description': 'ID заказа'},
-                    'master': {'type': 'integer', 'description': 'ID мастера'},
-                    'rating': {'type': 'integer', 'description': 'Рейтинг от 1 до 5'},
-                    'comment': {'type': 'string', 'description': 'Комментарий'}
-                },
-                'required': ['order', 'rating']
-            }
-        },
-        responses={
-            201: RatingSerializer,
-            400: {'type': 'object', 'properties': {'detail': {'type': 'string'}}},
-            404: {'type': 'object', 'properties': {'error': {'type': 'string'}}},
-            401: {'type': 'object', 'properties': {'detail': {'type': 'string'}}}
-        }
-    )
-    def post(self, request):
-        """Создание рейтинга"""
-        serializer = RatingSerializer(data=request.data, context={'request': request})
-        if serializer.is_valid():
-            order_id = serializer.validated_data.get('order').id
-            
-            # Проверяем, что заказ существует и принадлежит пользователю
-            try:
-                order = Order.objects.get(id=order_id, user=request.user)
-            except Order.DoesNotExist:
-                return Response(
-                    {'error': 'Заказ не найден или не принадлежит вам'},
-                    status=status.HTTP_404_NOT_FOUND
-                )
-            
-            # Проверяем, что заказ завершен
-            if order.status != OrderStatus.COMPLETED:
-                return Response(
-                    {'error': 'Рейтинг можно оставить только для завершенных заказов'},
-                    status=status.HTTP_400_BAD_REQUEST
-                )
-            
-            # Проверяем, что рейтинг еще не был оставлен
-            master = serializer.validated_data.get('master')
-            
-            if master:
-                if Rating.objects.filter(order=order, user=request.user, master=master).exists():
-                    return Response(
-                        {'error': 'Вы уже оставили рейтинг для этого мастера по этому заказу'},
-                        status=status.HTTP_400_BAD_REQUEST
-                    )
-            
-            rating = serializer.save()
-            return Response(RatingSerializer(rating, context={'request': request}).data, status=status.HTTP_201_CREATED)
-        
-        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
-
-
-class RatingListView(APIView):
-    """
-    API для получения списка рейтингов.
-    
-    GET: получение рейтингов для мастера или мастера в мастере
-    """
-    permission_classes = [IsAuthenticated]
-    
-    @extend_schema(
-        summary="Получить список рейтингов",
-        description="Возвращает список рейтингов для мастера",
-        tags=['Rating'],
-        parameters=[
-            {'name': 'master', 'in': 'query', 'description': 'ID мастера', 'type': 'integer', 'required': True}
-        ],
-        responses={
-            200: RatingSerializer(many=True),
-            401: {'type': 'object', 'properties': {'detail': {'type': 'string'}}}
-        }
-    )
-    def get(self, request):
-        """Получение списка рейтингов"""
-        master_id = request.query_params.get('master')
-        
-        if not master_id:
-            return Response(
-                {'error': 'Необходимо указать master'},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-        
-        ratings = Rating.objects.filter(master_id=master_id)
-        
-        serializer = RatingSerializer(ratings, many=True, context={'request': request})
-        return Response(serializer.data, status=status.HTTP_200_OK)
 
 
 class AvailableOrdersForMasterView(APIView):
