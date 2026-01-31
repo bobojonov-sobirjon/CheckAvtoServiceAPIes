@@ -26,6 +26,12 @@ class OrderPriority(models.TextChoices):
     HIGH = 'high', 'Высокий'
 
 
+class OrderType(models.TextChoices):
+    """Типы заказов"""
+    SCHEDULED = 'scheduled', 'Запланированный (по дате)'
+    SOS = 'sos', 'SOS/Экстренный'
+
+
 class Order(models.Model):
     """Модель заказа"""
     user = models.ForeignKey(
@@ -59,6 +65,13 @@ class Order(models.Model):
         choices=OrderPriority.choices,
         default=OrderPriority.LOW,
         verbose_name='Приоритет заказа'
+    )
+    order_type = models.CharField(
+        max_length=20,
+        choices=OrderType.choices,
+        default=OrderType.SCHEDULED,
+        verbose_name='Тип заказа',
+        help_text='Scheduled - запланированный заказ по дате, SOS - экстренная помощь'
     )
     location = models.TextField(
         verbose_name='Местоположение',
@@ -95,6 +108,26 @@ class Order(models.Model):
         verbose_name='Мастера (пользователи)',
         help_text='Список пользователей-мастеров, назначенных на этот заказ'
     )
+    
+    # Поля для запланированных заказов (order_type=scheduled)
+    scheduled_date = models.DateField(
+        null=True,
+        blank=True,
+        verbose_name='Запланированная дата',
+        help_text='Дата визита к мастеру (только для запланированных заказов)'
+    )
+    scheduled_time_start = models.TimeField(
+        null=True,
+        blank=True,
+        verbose_name='Начало визита',
+        help_text='Время начала визита (например: 10:00)'
+    )
+    scheduled_time_end = models.TimeField(
+        null=True,
+        blank=True,
+        verbose_name='Конец визита',
+        help_text='Время окончания визита (например: 11:00)'
+    )
     created_at = models.DateTimeField(
         auto_now_add=True,
         verbose_name='Дата создания'
@@ -116,7 +149,8 @@ class Order(models.Model):
         ordering = ['-created_at']
 
     def __str__(self):
-        return f"Заказ #{self.id} - {self.user.get_full_name()} ({self.get_status_display()})"
+        order_type_display = self.get_order_type_display()
+        return f"Заказ #{self.id} - {order_type_display} - {self.user.get_full_name()} ({self.get_status_display()})"
 
     def clean(self):
         """Валидация модели"""
@@ -216,4 +250,56 @@ class Rating(models.Model):
 
     def save(self, *args, **kwargs):
         self.clean()
+        super().save(*args, **kwargs)
+
+
+class ScheduledOrderManager(models.Manager):
+    """Manager для запланированных заказов"""
+    def get_queryset(self):
+        return super().get_queryset().filter(order_type=OrderType.SCHEDULED)
+
+
+class ScheduledOrder(Order):
+    """
+    Proxy модель для запланированных заказов (Order by Date)
+    Заказы, которые клиент делает заранее с выбором мастера, даты и времени
+    """
+    objects = ScheduledOrderManager()
+    
+    class Meta:
+        proxy = True
+        verbose_name = 'Запланированный заказ'
+        verbose_name_plural = 'Запланированные заказы (по дате)'
+        ordering = ['scheduled_date', 'scheduled_time_start']
+    
+    def save(self, *args, **kwargs):
+        if not self.order_type:
+            self.order_type = OrderType.SCHEDULED
+        super().save(*args, **kwargs)
+
+
+class SOSOrderManager(models.Manager):
+    """Manager для SOS заказов"""
+    def get_queryset(self):
+        return super().get_queryset().filter(order_type=OrderType.SOS)
+
+
+class SOSOrder(Order):
+    """
+    Proxy модель для SOS заказов (экстренная помощь)
+    Заказы, которые клиент делает срочно с текущей геолокацией
+    """
+    objects = SOSOrderManager()
+    
+    class Meta:
+        proxy = True
+        verbose_name = 'SOS заказ'
+        verbose_name_plural = 'SOS заказы (экстренная помощь)'
+        ordering = ['-created_at']
+    
+    def save(self, *args, **kwargs):
+        if not self.order_type:
+            self.order_type = OrderType.SOS
+        # SOS заказы всегда имеют высокий приоритет
+        self.priority = OrderPriority.HIGH
         super().save(*args, **kwargs)

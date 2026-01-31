@@ -1,6 +1,6 @@
 from rest_framework import serializers
 from django.contrib.auth import get_user_model
-from .models import Order, OrderStatus, OrderPriority, Rating
+from .models import Order, OrderStatus, OrderPriority, OrderType, Rating
 from apps.car.models import Car
 from apps.categories.models import Category
 from apps.master.models import Master
@@ -19,16 +19,18 @@ class OrderSerializer(serializers.ModelSerializer):
     masters = serializers.SerializerMethodField()
     status_display = serializers.CharField(source='get_status_display', read_only=True)
     priority_display = serializers.CharField(source='get_priority_display', read_only=True)
+    order_type_display = serializers.CharField(source='get_order_type_display', read_only=True)
     car_data = serializers.SerializerMethodField()
     category_data = serializers.SerializerMethodField()
 
     class Meta:
         model = Order
         fields = [
-            'id', 'user',
+            'id', 'user', 'order_type', 'order_type_display',
             'car_data', 'category_data',
             'text', 'status', 'status_display', 'priority', 'priority_display',
             'location', 'latitude', 'longitude', 'master', 'masters',
+            'scheduled_date', 'scheduled_time_start', 'scheduled_time_end',
             'created_at', 'updated_at'
         ]
         read_only_fields = ['id', 'created_at', 'updated_at']
@@ -103,28 +105,39 @@ class OrderCreateSerializer(serializers.ModelSerializer):
     """
     Сериализатор для создания заказа
     
-    Поддерживает два сценария:
-    1. SOS заказ: без мастера (master_id не указан) - для экстренных ситуаций
-    2. Обычный заказ: с выбором мастера (master_id указан)
+    Поддерживает два типа заказов:
+    1. SCHEDULED (запланированный): клиент выбирает мастера, дату и время визита
+    2. SOS (экстренный): клиент делает срочный заказ с текущей геолокацией
     
-    Обязательные поля для обоих сценариев:
+    Обязательные поля для обоих типов:
+    - order_type: тип заказа ('scheduled' или 'sos')
     - text: описание проблемы
-    - priority: приоритет (low или high)
     - location: адрес местоположения
     - latitude: широта
     - longitude: долгота
     - car_list: список ID машин
     - category_list: список ID категорий проблем
     
-    Необязательные поля:
-    - master_id: ID мастера (для обычного заказа)
-    - masters_list: список ID пользователей-мастеров (для рейтинга)
+    Для SCHEDULED заказа дополнительно обязательно:
+    - master_id: ID мастера
+    - scheduled_date: дата визита
+    - scheduled_time_start: время начала
+    - scheduled_time_end: время окончания
+    
+    Для SOS заказа:
+    - priority автоматически устанавливается в 'high'
+    - master_id необязателен (система найдет ближайших мастеров)
     """
+    order_type = serializers.ChoiceField(
+        choices=OrderType.choices,
+        required=True,
+        help_text="Тип заказа: 'scheduled' (запланированный) или 'sos' (экстренный)"
+    )
     master_id = serializers.IntegerField(
         required=False,
         allow_null=True,
         write_only=True,
-        help_text="ID мастера (необязательно). Не указывайте для SOS заказа, укажите для обычного заказа"
+        help_text="ID мастера (обязательно для scheduled, необязательно для sos)"
     )
     car_list = serializers.ListField(
         child=serializers.IntegerField(),
@@ -151,15 +164,19 @@ class OrderCreateSerializer(serializers.ModelSerializer):
     class Meta:
         model = Order
         fields = [
-            'text', 'priority', 'location', 'latitude', 'longitude', 
-            'master_id', 'car_list', 'category_list', 'masters_list'
+            'order_type', 'text', 'priority', 'location', 'latitude', 'longitude', 
+            'master_id', 'scheduled_date', 'scheduled_time_start', 'scheduled_time_end',
+            'car_list', 'category_list', 'masters_list'
         ]
         extra_kwargs = {
             'text': {'required': True},
-            'priority': {'required': True},
             'location': {'required': True},
             'latitude': {'required': True},
             'longitude': {'required': True},
+            'priority': {'required': False},  # Для SOS avtomatik
+            'scheduled_date': {'required': False},
+            'scheduled_time_start': {'required': False},
+            'scheduled_time_end': {'required': False},
         }
 
     def validate_master_id(self, value):
@@ -225,13 +242,57 @@ class OrderCreateSerializer(serializers.ModelSerializer):
     def validate(self, attrs):
         """
         Общая валидация данных заказа
-        Проверяет расстояние между заказом и мастером (если указан master_id)
+        Проверяет обязательные поля в зависимости от типа заказа
         """
+        order_type = attrs.get('order_type')
         master_id = attrs.get('master_id')
         order_lat = attrs.get('latitude')
         order_lon = attrs.get('longitude')
         
-        # Если указан master_id, проверяем расстояние
+        # Валидация для SCHEDULED заказов
+        if order_type == OrderType.SCHEDULED:
+            # Для scheduled обязательны: master_id, scheduled_date, scheduled_time_start, scheduled_time_end
+            if not master_id:
+                raise serializers.ValidationError({
+                    'master_id': 'Для запланированного заказа необходимо указать мастера'
+                })
+            if not attrs.get('scheduled_date'):
+                raise serializers.ValidationError({
+                    'scheduled_date': 'Для запланированного заказа необходимо указать дату визита'
+                })
+            if not attrs.get('scheduled_time_start'):
+                raise serializers.ValidationError({
+                    'scheduled_time_start': 'Для запланированного заказа необходимо указать время начала'
+                })
+            if not attrs.get('scheduled_time_end'):
+                raise serializers.ValidationError({
+                    'scheduled_time_end': 'Для запланированного заказа необходимо указать время окончания'
+                })
+            
+            # Проверяем, что дата в будущем
+            from datetime import date
+            if attrs.get('scheduled_date') < date.today():
+                raise serializers.ValidationError({
+                    'scheduled_date': 'Дата визита не может быть в прошлом'
+                })
+            
+            # Проверяем, что время начала < времени окончания
+            if attrs.get('scheduled_time_start') >= attrs.get('scheduled_time_end'):
+                raise serializers.ValidationError({
+                    'scheduled_time_start': 'Время начала должно быть меньше времени окончания'
+                })
+        
+        # Валидация для SOS заказов
+        elif order_type == OrderType.SOS:
+            # Для SOS автоматически устанавливаем высокий приоритет
+            attrs['priority'] = OrderPriority.HIGH
+            
+            # SOS не должен иметь scheduled полей
+            attrs['scheduled_date'] = None
+            attrs['scheduled_time_start'] = None
+            attrs['scheduled_time_end'] = None
+        
+        # Проверка расстояния между заказом и мастером (если указан master_id)
         if master_id and order_lat and order_lon:
             try:
                 master = Master.objects.get(id=master_id)
@@ -320,7 +381,8 @@ class OrderUpdateSerializer(serializers.ModelSerializer):
     class Meta:
         model = Order
         fields = [
-            'text', 'status', 'priority', 'location', 'latitude', 'longitude', 'master'
+            'text', 'status', 'priority', 'location', 'latitude', 'longitude', 'master',
+            'scheduled_date', 'scheduled_time_start', 'scheduled_time_end'
         ]
 
     def validate_latitude(self, value):

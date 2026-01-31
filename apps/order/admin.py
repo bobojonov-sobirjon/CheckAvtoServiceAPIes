@@ -2,45 +2,21 @@ from django.contrib import admin
 from django.utils.html import format_html
 from django.urls import reverse
 from django.utils.safestring import mark_safe
-from .models import Order, OrderStatus, OrderPriority
+from .models import Order, OrderStatus, OrderPriority, OrderType, ScheduledOrder, SOSOrder
 
 
-@admin.register(Order)
-class OrderAdmin(admin.ModelAdmin):
-    """Админка для заказов"""
+class BaseOrderAdmin(admin.ModelAdmin):
+    """Базовая админка для заказов"""
     
-    list_display = [
-        'user_link', 'status_badge', 'priority_badge', 
-        'master_link', 'location_short', 'created_at', 'updated_at'
-    ]
-    list_filter = [
-        'status', 'priority', 'created_at', 'updated_at', 
-        'master__city', 'master'
-    ]
+    list_per_page = 25
+    list_max_show_all = 100
+    readonly_fields = ['id', 'created_at', 'updated_at', 'user_link', 'master_link', 'order_type']
+    filter_horizontal = ['masters', 'car', 'category']
+    
     search_fields = [
         'id', 'text', 'location', 'user__first_name', 'user__last_name', 
         'user__email', 'master__user__first_name', 'master__user__last_name'
     ]
-    readonly_fields = ['id', 'created_at', 'updated_at', 'user_link', 'master_link']
-    filter_horizontal = ['masters', 'car', 'category']
-    list_per_page = 25
-    list_max_show_all = 100
-    
-    fieldsets = (
-        ('Основная информация', {
-            'fields': ('id', 'user_link', 'text', 'status', 'priority')
-        }),
-        ('Местоположение', {
-            'fields': ('location', 'latitude', 'longitude')
-        }),
-        ('Мастер', {
-            'fields': ('master_link', 'masters')
-        }),
-        ('Временные метки', {
-            'fields': ('created_at', 'updated_at'),
-            'classes': ('collapse',)
-        }),
-    )
     
     def user_link(self, obj):
         """Ссылка на пользователя"""
@@ -126,6 +102,98 @@ class OrderAdmin(admin.ModelAdmin):
         if not request.user.is_superuser:
             readonly_fields.extend(['user', 'master'])
         
+        return readonly_fields
+
+
+@admin.register(ScheduledOrder)
+class ScheduledOrderAdmin(BaseOrderAdmin):
+    """Админка для запланированных заказов (Order by Date)"""
+    
+    list_display = [
+        'id', 'user_link', 'master_link', 'scheduled_date', 'time_slot',
+        'status_badge', 'priority_badge', 'created_at'
+    ]
+    
+    list_filter = [
+        'status', 'priority', 'scheduled_date', 'created_at',
+        'master__city', 'master'
+    ]
+    
+    fieldsets = (
+        ('Основная информация', {
+            'fields': ('id', 'order_type', 'user_link', 'text', 'status', 'priority')
+        }),
+        ('Дата и время визита', {
+            'fields': ('scheduled_date', 'scheduled_time_start', 'scheduled_time_end'),
+            'classes': ('wide',)
+        }),
+        ('Мастер и услуги', {
+            'fields': ('master_link', 'category', 'car')
+        }),
+        ('Местоположение мастера', {
+            'fields': ('location', 'latitude', 'longitude'),
+            'classes': ('collapse',)
+        }),
+        ('Временные метки', {
+            'fields': ('created_at', 'updated_at'),
+            'classes': ('collapse',)
+        }),
+    )
+    
+    def time_slot(self, obj):
+        """Временной слот"""
+        if obj.scheduled_time_start and obj.scheduled_time_end:
+            return f"{obj.scheduled_time_start.strftime('%H:%M')}-{obj.scheduled_time_end.strftime('%H:%M')}"
+        return '-'
+    time_slot.short_description = 'Время визита'
+    time_slot.admin_order_field = 'scheduled_time_start'
+
+
+@admin.register(SOSOrder)
+class SOSOrderAdmin(BaseOrderAdmin):
+    """Админка для SOS заказов (экстренная помощь)"""
+    
+    list_display = [
+        'id', 'user_link', 'master_link', 'location_short', 
+        'status_badge', 'created_at', 'coordinates'
+    ]
+    
+    list_filter = [
+        'status', 'created_at', 'master__city', 'master'
+    ]
+    
+    fieldsets = (
+        ('Основная информация', {
+            'fields': ('id', 'order_type', 'user_link', 'text', 'status'),
+            'classes': ('wide',)
+        }),
+        ('Местоположение клиента (GPS)', {
+            'fields': ('location', 'latitude', 'longitude'),
+            'classes': ('wide',)
+        }),
+        ('Мастер и услуги', {
+            'fields': ('master_link', 'category', 'car')
+        }),
+        ('Временные метки', {
+            'fields': ('created_at', 'updated_at'),
+            'classes': ('collapse',)
+        }),
+    )
+    
+    def coordinates(self, obj):
+        """GPS координаты"""
+        if obj.latitude and obj.longitude:
+            return format_html(
+                '<a href="https://www.google.com/maps?q={},{}" target="_blank">{:.4f}, {:.4f}</a>',
+                obj.latitude, obj.longitude, obj.latitude, obj.longitude
+            )
+        return '-'
+    coordinates.short_description = 'GPS координаты'
+    
+    def get_readonly_fields(self, request, obj=None):
+        """Поля только для чтения"""
+        readonly_fields = list(super().get_readonly_fields(request, obj))
+        # Для SOS заказов scheduled поля не нужны
         return readonly_fields
 
 
