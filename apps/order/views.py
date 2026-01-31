@@ -124,7 +124,7 @@ class ScheduledOrderCreateView(APIView):
 5. ✅ Мастер получает уведомление о новом заказе
 6. Мастер подтверждает или отклоняет заказ
         """,
-        tags=['📅 Orders: Scheduled (Order by Date)'],
+        tags=['Orders'],
         request={
             'application/json': {
                 'type': 'object',
@@ -309,7 +309,7 @@ class SOSOrderCreateView(APIView):
 6. Первый принявший мастер получает заказ
 7. Клиент видит информацию о мастере и может с ним связаться
         """,
-        tags=['🚨 Orders: SOS (Emergency)'],
+        tags=['Orders'],
         request={
             'application/json': {
                 'type': 'object',
@@ -381,7 +381,7 @@ class SOSOrderCreateView(APIView):
 
 
 class OrderListCreateView(APIView):
-    """Список заказов (DEPRECATED - используйте /scheduled/ или /sos/)"""
+    """Список заказов"""
     permission_classes = [IsAuthenticated]
     filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
     filterset_fields = ['status', 'priority', 'master']
@@ -425,89 +425,6 @@ class OrderListCreateView(APIView):
         
         serializer = OrderSerializer(queryset, many=True)
         return Response(serializer.data)
-
-    @extend_schema(
-        summary="⚠️ DEPRECATED: Создать заказ (используйте /scheduled/ или /sos/)",
-        description="""
-# ⚠️ DEPRECATED
-
-**Этот endpoint устарел!**
-
-Пожалуйста, используйте новые специализированные endpoints:
-- 📅 `/api/order/scheduled/` - для запланированных заказов (Order by Date)
-- 🚨 `/api/order/sos/` - для экстренных заказов (SOS)
-
-Этот endpoint оставлен только для обратной совместимости и будет удален в будущих версиях.
-        """,
-        tags=['Orders (Deprecated)'],
-        deprecated=True,
-        request={
-            'application/json': {
-                'type': 'object',
-                'required': ['text', 'priority', 'location', 'latitude', 'longitude', 'car_list', 'category_list'],
-                'properties': {
-                    'text': {'type': 'string', 'description': 'Описание проблемы (обязательно)', 'example': 'Нужна помощь с заменой колеса'},
-                    'priority': {'type': 'string', 'enum': ['low', 'high'], 'description': 'Приоритет заказа (обязательно)', 'example': 'high'},
-                    'location': {'type': 'string', 'description': 'Адрес или описание места (обязательно)', 'example': 'ул. Навои, д. 15, Ташкент'},
-                    'latitude': {'type': 'number', 'description': 'Широта местоположения (обязательно, от -90 до 90)', 'example': 41.3111},
-                    'longitude': {'type': 'number', 'description': 'Долгота местоположения (обязательно, от -180 до 180)', 'example': 69.2797},
-                    'car_list': {'type': 'array', 'items': {'type': 'integer'}, 'description': 'Список ID машин (обязательно). Пример: [1, 2]', 'example': [2]},
-                    'category_list': {'type': 'array', 'items': {'type': 'integer'}, 'description': 'Список ID категорий проблем (обязательно). Пример: [1, 2]', 'example': [1]},
-                    'master_id': {'type': 'integer', 'description': 'ID мастера (необязательно, для обычного заказа)', 'example': 5},
-                    'masters_list': {'type': 'array', 'items': {'type': 'integer'}, 'description': 'Список ID пользователей-мастеров (необязательно, для рейтинга). Пример: [4, 5]', 'example': [4, 5]}
-                }
-            }
-        },
-        responses={
-            201: {
-                'type': 'object',
-                'properties': {
-                    'message': {'type': 'string', 'description': 'Сообщение об успешном создании заказа', 'example': 'Ваш заказ отправлен'},
-                    'order': {'type': 'object', 'description': 'Данные созданного заказа'}
-                }
-            },
-            400: {
-                'description': 'Ошибка валидации',
-                'content': {
-                    'application/json': {
-                        'examples': {
-                            'distance_error': {
-                                'summary': 'Мастер слишком далеко',
-                                'value': {
-                                    'master_id': ['Выбранный мастер находится слишком далеко (150.5 км). Максимальное расстояние: 50 км. Пожалуйста, выберите мастера ближе к вашему местоположению.']
-                                }
-                            },
-                            'no_coordinates': {
-                                'summary': 'У мастера нет координат',
-                                'value': {
-                                    'master_id': ['У выбранного мастера не указаны координаты. Пожалуйста, выберите другого мастера.']
-                                }
-                            },
-                            'validation_error': {
-                                'summary': 'Общая ошибка валидации',
-                                'value': {
-                                    'detail': 'Ошибка валидации данных'
-                                }
-                            }
-                        }
-                    }
-                }
-            },
-            401: {'type': 'object', 'properties': {'detail': {'type': 'string'}}},
-        }
-    )
-    def post(self, request):
-        """Создать новый заказ"""
-        serializer = OrderCreateSerializer(data=request.data)
-        if serializer.is_valid():
-            order = serializer.save(user=request.user)
-            # Возвращаем полную информацию о заказе с сообщением
-            order_serializer = OrderSerializer(order)
-            return Response({
-                'message': 'Ваш заказ отправлен',
-                'order': order_serializer.data
-            }, status=status.HTTP_201_CREATED)
-        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
     def apply_filters(self, queryset, request):
         """Применить фильтры к queryset"""
