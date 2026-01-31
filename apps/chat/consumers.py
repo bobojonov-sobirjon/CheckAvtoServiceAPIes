@@ -18,15 +18,21 @@ class ChatConsumer(AsyncWebsocketConsumer):
         self.room_group_name = f'chat_{self.room_id}'
         self.user = self.scope['user']
         
+        print(f"[DEBUG] WebSocket connect attempt: room_id={self.room_id}, user={self.user}")
+        
         # Проверяем авторизацию
         if not self.user or not self.user.is_authenticated:
-            await self.close()
+            print(f"[DEBUG] Authentication failed: user={self.user}")
+            await self.close(code=4001)
             return
         
         # Проверяем доступ к комнате
         has_access = await self.check_room_access()
+        print(f"[DEBUG] Room access check: has_access={has_access}")
+        
         if not has_access:
-            await self.close()
+            print(f"[DEBUG] Access denied to room {self.room_id} for user {self.user.id}")
+            await self.close(code=4003)
             return
         
         # Присоединяемся к группе комнаты
@@ -36,6 +42,8 @@ class ChatConsumer(AsyncWebsocketConsumer):
         )
         
         await self.accept()
+        
+        print(f"[DEBUG] User {self.user.id} successfully connected to room {self.room_id}")
         
         # Отправляем подтверждение подключения
         await self.send(text_data=json.dumps({
@@ -54,8 +62,17 @@ class ChatConsumer(AsyncWebsocketConsumer):
     async def receive(self, text_data):
         """Получение сообщения от клиента"""
         try:
+            print(f"[DEBUG] Received data: {text_data[:100]}")  # First 100 chars
+            
+            # Check if text_data is empty or whitespace
+            if not text_data or not text_data.strip():
+                print("[DEBUG] Empty message received, ignoring")
+                return
+            
             data = json.loads(text_data)
             message_type = data.get('type')
+            
+            print(f"[DEBUG] Message type: {message_type}")
             
             if message_type == 'chat_message':
                 # Сохраняем сообщение в БД
@@ -95,10 +112,21 @@ class ChatConsumer(AsyncWebsocketConsumer):
                         }
                     )
         
-        except Exception as e:
+        except json.JSONDecodeError as e:
+            error_msg = f"Invalid JSON format: {str(e)}"
+            print(f"[DEBUG] JSON decode error: {error_msg}")
+            print(f"[DEBUG] Received text: {text_data}")
             await self.send(text_data=json.dumps({
                 'type': 'error',
-                'message': str(e)
+                'message': error_msg
+            }))
+        
+        except Exception as e:
+            error_msg = f"Error processing message: {str(e)}"
+            print(f"[DEBUG] General error: {error_msg}")
+            await self.send(text_data=json.dumps({
+                'type': 'error',
+                'message': error_msg
             }))
     
     async def chat_message(self, event):
@@ -131,8 +159,18 @@ class ChatConsumer(AsyncWebsocketConsumer):
         """Проверка доступа к комнате"""
         try:
             room = ChatRoom.objects.get(id=self.room_id)
-            return room.participants.filter(id=self.user.id).exists()
+            participants = room.participants.all()
+            participant_ids = [p.id for p in participants]
+            
+            print(f"[DEBUG] Room {self.room_id} participants: {participant_ids}")
+            print(f"[DEBUG] Current user ID: {self.user.id}")
+            
+            has_access = room.participants.filter(id=self.user.id).exists()
+            print(f"[DEBUG] Access result: {has_access}")
+            
+            return has_access
         except ChatRoom.DoesNotExist:
+            print(f"[DEBUG] Room {self.room_id} does not exist")
             return False
     
     @database_sync_to_async
