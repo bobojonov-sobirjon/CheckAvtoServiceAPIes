@@ -1004,6 +1004,12 @@ class OrdersByMasterView(APIView):
 - Показывает заказы текущего мастера со статусом COMPLETED
 - Пример: `is_archive=true`
 
+### 10. Тип заказа (order_type)
+- Фильтр по типу заказа
+- Значения: `scheduled` (запланированный) или `sos` (экстренный)
+- Пример: `order_type=scheduled` - показывает только запланированные заказы
+- Пример: `order_type=sos` - показывает только SOS заказы
+
 ## Pagination
 - По умолчанию 10 заказов на страницу
 - Можно изменить через `page_size` (макс. 100)
@@ -1044,6 +1050,21 @@ GET /api/order/by-master/?category=1
 ```
 GET /api/order/by-master/?status=pending&priority=high&category=1&location=Ташкент
 ```
+
+**Только запланированные заказы (Order by Date):**
+```
+GET /api/order/by-master/?order_type=scheduled
+```
+
+**Только SOS заказы (экстренные):**
+```
+GET /api/order/by-master/?order_type=sos
+```
+
+**Запланированные заказы со статусом pending:**
+```
+GET /api/order/by-master/?order_type=scheduled&status=pending
+```
         """,
         tags=['Orders'],
         parameters=[
@@ -1064,6 +1085,7 @@ GET /api/order/by-master/?status=pending&priority=high&category=1&location=Та�
             OpenApiParameter(name='is_new', type=OpenApiTypes.BOOL, location=OpenApiParameter.QUERY, description='Новые заказы (master=null и masters пустой)', required=False),
             OpenApiParameter(name='is_work', type=OpenApiTypes.BOOL, location=OpenApiParameter.QUERY, description='Заказы в работе (status=IN_PROGRESS)', required=False),
             OpenApiParameter(name='is_archive', type=OpenApiTypes.BOOL, location=OpenApiParameter.QUERY, description='Завершенные заказы (status=COMPLETED)', required=False),
+            OpenApiParameter(name='order_type', type=OpenApiTypes.STR, location=OpenApiParameter.QUERY, description='Фильтр по типу заказа (scheduled - запланированные, sos - экстренные)', required=False, enum=['scheduled', 'sos']),
             OpenApiParameter(name='page', type=OpenApiTypes.INT, location=OpenApiParameter.QUERY, description='Номер страницы для пагинации', required=False),
             OpenApiParameter(name='page_size', type=OpenApiTypes.INT, location=OpenApiParameter.QUERY, description='Количество заказов на странице (макс. 100)', required=False),
         ],
@@ -1123,6 +1145,12 @@ GET /api/order/by-master/?status=pending&priority=high&category=1&location=Та�
         priority_filter = request.query_params.get('priority')
         if priority_filter:
             orders = orders.filter(priority=priority_filter)
+        
+        # Фильтр по типу заказа (scheduled или sos)
+        order_type_filter = request.query_params.get('order_type')
+        if order_type_filter:
+            if order_type_filter in ['scheduled', 'sos']:
+                orders = orders.filter(order_type=order_type_filter)
         
         # Smart фильтр по категории проблемы (Тип проблемы)
         category_filter = request.query_params.get('category')
