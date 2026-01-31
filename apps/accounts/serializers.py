@@ -263,6 +263,9 @@ class UserDetailsSerializer(serializers.ModelSerializer):
     avatar = serializers.ImageField(use_url=True, read_only=True)
     reviews = serializers.SerializerMethodField()
     rating = serializers.SerializerMethodField()
+    reviews_count = serializers.SerializerMethodField()
+    completed_orders = serializers.SerializerMethodField()
+    recommendation_percentage = serializers.SerializerMethodField()
     
     class Meta:
         model = CustomUser
@@ -270,12 +273,12 @@ class UserDetailsSerializer(serializers.ModelSerializer):
             'id', 'private_id', 'username', 'email', 'phone_number', 'first_name', 
             'last_name', 'date_of_birth', 'avatar', 'address', 
             'longitude', 'latitude', 'is_verified', 'roles', 'balance',
-            'reviews', 'rating',
+            'reviews', 'rating', 'reviews_count', 'completed_orders', 'recommendation_percentage',
             'created_at', 'updated_at', 'description'
         ]
         read_only_fields = [
             'id', 'private_id', 'email', 'phone_number', 'is_verified', 'roles', 'balance',
-            'reviews', 'rating',
+            'reviews', 'rating', 'reviews_count', 'completed_orders', 'recommendation_percentage',
             'created_at', 'updated_at'
         ]
     
@@ -373,6 +376,91 @@ class UserDetailsSerializer(serializers.ModelSerializer):
             logger = logging.getLogger(__name__)
             logger.error(f"Error getting rating for user {obj.id}: {str(e)}")
             return 0.0
+    
+    def get_reviews_count(self, obj):
+        """Получение количества отзывов о пользователе (как мастере)"""
+        try:
+            from apps.order.models import Review, Order
+            
+            # Находим все заказы, где user был мастером
+            orders_as_main_master = Order.objects.filter(master__user=obj)
+            orders_as_assigned_master = Order.objects.filter(masters=obj)
+            
+            # Объединяем ID
+            all_order_ids = set(orders_as_main_master.values_list('id', flat=True)) | \
+                           set(orders_as_assigned_master.values_list('id', flat=True))
+            
+            # Считаем отзывы для этих заказов
+            reviews_count = Review.objects.filter(order_id__in=all_order_ids).count()
+            return reviews_count
+        except Exception as e:
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.error(f"Error getting reviews count for user {obj.id}: {str(e)}")
+            return 0
+    
+    def get_completed_orders(self, obj):
+        """Получение количества выполненных заказов"""
+        try:
+            from apps.order.models import Order, OrderStatus
+            
+            # Заказы где user - главный мастер
+            orders_as_main_master = Order.objects.filter(
+                master__user=obj,
+                status=OrderStatus.COMPLETED
+            ).count()
+            
+            # Заказы где user в списке masters
+            orders_as_assigned_master = Order.objects.filter(
+                masters=obj,
+                status=OrderStatus.COMPLETED
+            ).count()
+            
+            # Получаем уникальные заказы
+            from django.db.models import Q
+            total_orders = Order.objects.filter(
+                Q(master__user=obj) | Q(masters=obj),
+                status=OrderStatus.COMPLETED
+            ).distinct().count()
+            
+            return total_orders
+        except Exception as e:
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.error(f"Error getting completed orders for user {obj.id}: {str(e)}")
+            return 0
+    
+    def get_recommendation_percentage(self, obj):
+        """Получение процента рекомендаций (отзывы с рейтингом 4-5)"""
+        try:
+            from apps.order.models import Review, Order
+            
+            # Находим все заказы, где user был мастером
+            orders_as_main_master = Order.objects.filter(master__user=obj)
+            orders_as_assigned_master = Order.objects.filter(masters=obj)
+            
+            # Объединяем ID
+            all_order_ids = set(orders_as_main_master.values_list('id', flat=True)) | \
+                           set(orders_as_assigned_master.values_list('id', flat=True))
+            
+            # Получаем все отзывы
+            all_reviews = Review.objects.filter(order_id__in=all_order_ids)
+            total_reviews = all_reviews.count()
+            
+            if total_reviews == 0:
+                return 0
+            
+            # Считаем отзывы с рейтингом 4 и 5
+            positive_reviews = all_reviews.filter(rating__gte=4).count()
+            
+            # Вычисляем процент
+            percentage = round((positive_reviews / total_reviews) * 100)
+            return percentage
+        except Exception as e:
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.error(f"Error getting recommendation percentage for user {obj.id}: {str(e)}")
+            return 0
 
 
 class UserUpdateSerializer(serializers.ModelSerializer):
