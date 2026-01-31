@@ -38,7 +38,11 @@ class ChatMessageSerializer(serializers.ModelSerializer):
         """Определить тип отправителя относительно текущего пользователя"""
         request = self.context.get('request')
         if request and request.user:
-            return obj.room.get_sender_type(obj.sender)
+            # Если message sender == request user, то initiator (сам написал)
+            # Иначе receiver (кто-то другой написал)
+            if obj.sender == request.user:
+                return 'initiator'
+            return 'receiver'
         # Если нет request (WebSocket), то sender всегда initiator
         return 'initiator'
     
