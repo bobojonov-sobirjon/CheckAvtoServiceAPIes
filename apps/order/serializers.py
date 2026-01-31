@@ -483,6 +483,13 @@ class AddServicesToOrderSerializer(serializers.Serializer):
         allow_empty=False,
         help_text='Список ID услуг мастера (MasterServiceItems)'
     )
+    discount = serializers.DecimalField(
+        max_digits=10,
+        decimal_places=2,
+        required=False,
+        default=0.00,
+        help_text='Скидка на заказ'
+    )
     
     def validate_order_id(self, value):
         """Проверка существования заказа"""

@@ -1993,12 +1993,14 @@ class AddServicesToOrderView(APIView):
 ## Request Body
 - `order_id`: ID заказа
 - `services_list`: Список ID услуг мастера (MasterServiceItems)
+- `discount`: Скидка на заказ (необязательно, по умолчанию 0.00)
 
 ## Пример запроса:
 ```json
 {
   "order_id": 5,
-  "services_list": [1, 2, 3, 4, 5]
+  "services_list": [1, 2, 3, 4, 5],
+  "discount": 150.00
 }
 ```
 
@@ -2032,6 +2034,7 @@ class AddServicesToOrderView(APIView):
         
         order_id = serializer.validated_data['order_id']
         services_list = serializer.validated_data['services_list']
+        discount = serializer.validated_data.get('discount', 0.00)
         
         # Получаем заказ
         try:
@@ -2041,6 +2044,10 @@ class AddServicesToOrderView(APIView):
                 {'error': f'Заказ с ID {order_id} не найден'},
                 status=status.HTTP_404_NOT_FOUND
             )
+        
+        # Обновляем скидку в заказе
+        order.discount = discount
+        order.save()
         
         # Создаем связи OrderService
         from apps.master.models import MasterServiceItems
