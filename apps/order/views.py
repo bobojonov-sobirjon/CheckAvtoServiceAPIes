@@ -468,17 +468,15 @@ class AvailableTimeSlotsView(APIView):
                 name='master_id',
                 type=OpenApiTypes.INT,
                 location=OpenApiParameter.QUERY,
-                description='ID мастера (обязательно)',
-                required=True,
-                example=5
+                description='ID мастера (обязательно). Пример: 5',
+                required=True
             ),
             OpenApiParameter(
                 name='date',
                 type=OpenApiTypes.DATE,
                 location=OpenApiParameter.QUERY,
-                description='Дата для проверки слотов (формат: YYYY-MM-DD)',
-                required=True,
-                example='2026-01-30'
+                description='Дата для проверки слотов (формат: YYYY-MM-DD). Пример: 2026-01-30',
+                required=True
             ),
         ],
         responses={
