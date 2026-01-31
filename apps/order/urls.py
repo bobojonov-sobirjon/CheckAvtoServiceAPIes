@@ -32,11 +32,7 @@ urlpatterns = [
     path('<int:order_id>/accept/', views.AcceptOrderView.as_view(), name='accept-order'),
     path('<int:order_id>/complete/', views.CompleteOrderView.as_view(), name='complete-order'),
     
-    # Rating endpoints
-    path('ratings/', views.RatingCreateView.as_view(), name='rating-create'),
-    path('ratings/list/', views.RatingListView.as_view(), name='rating-list'),
-    
-    # Review endpoints
+    # Review endpoints (replaces old Rating API)
     path('reviews/create/', views.CreateReviewView.as_view(), name='create-review'),
 ]
 
