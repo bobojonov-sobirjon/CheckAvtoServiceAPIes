@@ -242,6 +242,7 @@ class SOSOrderCreateView(APIView):
 
 ### Основные:
 - **order_type**: всегда "sos"
+- **master_id**: ID мастера/мастерской (обязательно)
 - **text**: описание проблемы (например: "Пробито колесо, не могу ехать дальше")
 - **priority**: приоритет заказа - "low" (низкий) или "high" (высокий)
 - **car_list**: список ID машин клиента [1, 2]
@@ -252,12 +253,12 @@ class SOSOrderCreateView(APIView):
 - **latitude**: текущая широта клиента (от -90 до 90)
 - **longitude**: текущая долгота клиента (от -180 до 180)
 
-## ⚠️ Автоматическая обработка:
+## ⚠️ Важные проверки:
 
 1. **Приоритет устанавливается клиентом** - клиент выбирает "Низкий" или "Высокий" приоритет
-2. **Поиск ближайших мастеров** - система найдет мастеров в радиусе 50 км
-3. **Уведомления мастерам** - все подходящие мастера получат push-уведомление
-4. **Первый принявший получает заказ** - мастер, который быстрее примет, получит заказ
+2. **Мастер выбирается клиентом** - клиент указывает конкретного мастера
+3. **Расстояние до мастера <= 50 км** - система проверит, что мастер находится в пределах 50 км от клиента
+4. **Уведомление мастеру** - выбранный мастер получит push-уведомление о новом SOS заказе
 
 ## 📝 Примеры использования:
 
@@ -265,6 +266,7 @@ class SOSOrderCreateView(APIView):
 ```json
 {
   "order_type": "sos",
+  "master_id": 5,
   "priority": "high",
   "text": "Пробито переднее правое колесо на трассе. Нужна срочная замена.",
   "location": "Трасса M39, км 45, около заправки Shell",
@@ -279,6 +281,7 @@ class SOSOrderCreateView(APIView):
 ```json
 {
   "order_type": "sos",
+  "master_id": 8,
   "priority": "low",
   "text": "Машина не заводится, аккумулятор сел. Нужна помощь с прикуриванием.",
   "location": "Торговый центр Mega Planet, подземная парковка -1 этаж",
@@ -294,19 +297,20 @@ class SOSOrderCreateView(APIView):
 
 1. Клиент нажимает кнопку "SOS" в приложении
 2. Приложение автоматически получает GPS-координаты
-3. Клиент описывает проблему
-4. Система отправляет заказ всем ближайшим мастерам (радиус 50 км)
-5. ✅ Мастера видят заказ с картой и могут принять его
-6. Первый принявший мастер получает заказ
+3. Клиент выбирает мастера из списка ближайших
+4. Клиент описывает проблему и выбирает приоритет
+5. ✅ Выбранный мастер получает уведомление о SOS заказе
+6. Мастер подтверждает или отклоняет заказ
 7. Клиент видит информацию о мастере и может с ним связаться
         """,
         tags=['Orders'],
         request={
             'application/json': {
                 'type': 'object',
-                'required': ['order_type', 'priority', 'text', 'location', 'latitude', 'longitude', 'car_list', 'category_list'],
+                'required': ['order_type', 'master_id', 'priority', 'text', 'location', 'latitude', 'longitude', 'car_list', 'category_list'],
                 'properties': {
                     'order_type': {'type': 'string', 'enum': ['sos'], 'description': 'Тип заказа (всегда "sos")', 'example': 'sos'},
+                    'master_id': {'type': 'integer', 'description': 'ID мастера/мастерской (обязательно)', 'example': 5},
                     'priority': {'type': 'string', 'enum': ['low', 'high'], 'description': 'Приоритет заказа: low (низкий) или high (высокий)', 'example': 'high'},
                     'text': {'type': 'string', 'description': 'Описание проблемы', 'example': 'Пробито переднее правое колесо на трассе'},
                     'location': {'type': 'string', 'description': 'Описание текущего места', 'example': 'Трасса M39, км 45, около заправки Shell'},
@@ -323,12 +327,13 @@ class SOSOrderCreateView(APIView):
                 'content': {
                     'application/json': {
                         'example': {
-                            'message': 'Ваш экстренный заказ отправлен! Ближайшие мастера уже получили уведомление.',
+                            'message': 'Ваш экстренный заказ отправлен мастеру!',
                             'order': {
                                 'id': 456,
                                 'order_type': 'sos',
                                 'status': 'pending',
                                 'priority': 'high',
+                                'master': {'id': 5, 'name': 'СТО Автосервис'},
                                 'location': 'Трасса M39, км 45',
                                 'latitude': 41.2548,
                                 'longitude': 69.2107,
@@ -343,9 +348,17 @@ class SOSOrderCreateView(APIView):
                 'content': {
                     'application/json': {
                         'examples': {
+                            'missing_master': {
+                                'summary': 'Не указан мастер',
+                                'value': {'master_id': ['Для SOS заказа необходимо указать мастера']}
+                            },
                             'missing_location': {
                                 'summary': 'Не указано местоположение',
                                 'value': {'latitude': ['Это поле обязательно'], 'longitude': ['Это поле обязательно']}
+                            },
+                            'distance_error': {
+                                'summary': 'Мастер слишком далеко',
+                                'value': {'master_id': ['Выбранный мастер находится слишком далеко (150.5 км). Максимальное расстояние: 50 км.']}
                             }
                         }
                     }
@@ -365,7 +378,7 @@ class SOSOrderCreateView(APIView):
             order = serializer.save(user=request.user)
             order_serializer = OrderSerializer(order)
             return Response({
-                'message': 'Ваш экстренный заказ отправлен! Ближайшие мастера уже получили уведомление.',
+                'message': 'Ваш экстренный заказ успешно создан и отправлен мастеру',
                 'order': order_serializer.data
             }, status=status.HTTP_201_CREATED)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
