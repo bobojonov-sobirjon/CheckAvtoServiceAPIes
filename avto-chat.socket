@@ -2,8 +2,8 @@
 Description=CheckAvto Daphne WebSocket socket
 
 [Socket]
-ListenStream=/run/avto-chat.sock
-# Optionally restrict socket permissions
+ListenStream=/run/avto/avto-chat.sock
+# Socket permissions
 SocketUser=www-data
 SocketMode=0660
 

@@ -2,38 +2,39 @@
 
 ## ⚡ Step-by-Step Commands
 
-### 1. Edit Service File
+### 1. Edit Service File (If Needed)
 
+**Default paths (matching your Gunicorn setup):**
+- User: `www-data`
+- WorkingDirectory: `/var/www/CheckAvtoServiceAPIes`
+- ExecStart: `/var/www/CheckAvtoServiceAPIes/env/bin/daphne`
+- Socket: `/run/avto/avto-chat.sock`
+
+**No changes needed if your paths match!**
+
+If your paths are different:
 ```bash
 nano avto-chat.service
 ```
 
-**Change these 4 lines:**
-- Line 8: `User=YOUR_USERNAME`
-- Line 10: `WorkingDirectory=/FULL/PATH/TO/CheckAvto`
-- Line 11: `Environment="PATH=/FULL/PATH/TO/venv/bin"`
-- Line 14: `ExecStart=/FULL/PATH/TO/venv/bin/daphne \`
-
-**Example:**
-```ini
-User=ubuntu
-WorkingDirectory=/home/ubuntu/CheckAvto
-Environment="PATH=/home/ubuntu/CheckAvto/venv/bin"
-ExecStart=/home/ubuntu/CheckAvto/venv/bin/daphne \
-```
+Change these lines:
+- Line 7: `User=www-data`
+- Line 9: `WorkingDirectory=/var/www/CheckAvtoServiceAPIes`
+- Line 10: `ExecStart=/var/www/CheckAvtoServiceAPIes/env/bin/daphne \`
+- Line 11: `-u /run/avto/avto-chat.sock \`
 
 ---
 
-### 2. Edit Nginx Config
+### 2. Edit Nginx Config (If Needed)
 
 ```bash
 nano nginx-avto-chat.conf
 ```
 
-**Change these 3 lines:**
-- Line 13: `server_name YOUR_DOMAIN;`
-- Line 19: `alias /PATH/TO/CheckAvto/staticfiles/;`
-- Line 24: `alias /PATH/TO/CheckAvto/media/;`
+**Change these if needed:**
+- Line 13: `server_name YOUR_DOMAIN;` (or use IP)
+- Line 19: `alias /var/www/CheckAvtoServiceAPIes/staticfiles/;`
+- Line 24: `alias /var/www/CheckAvtoServiceAPIes/media/;`
 
 ---
 
@@ -121,7 +122,10 @@ sudo journalctl -u avto-chat.service --no-pager
 sudo tail -50 /var/log/nginx/error.log
 
 # Check socket
-ls -la /run/avto-chat.sock
+ls -la /run/avto/avto-chat.sock
+
+# Check all sockets
+ls -la /run/avto/
 
 # Restart everything
 sudo systemctl restart avto

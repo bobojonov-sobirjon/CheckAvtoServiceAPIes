@@ -14,27 +14,28 @@
 
 ### 1. Update Service Files
 
-**Edit `avto-chat.service`:**
+**Edit `avto-chat.service` (if needed):**
 
+**Default configuration (matches Gunicorn setup):**
+```ini
+User=www-data
+Group=www-data
+WorkingDirectory=/var/www/CheckAvtoServiceAPIes
+ExecStart=/var/www/CheckAvtoServiceAPIes/env/bin/daphne \
+    -u /run/avto/avto-chat.sock \
+    config.asgi:application
+```
+
+**If your paths are different:**
 ```bash
 sudo nano avto-chat.service
 ```
 
 **Change these values:**
-- `User=your_user` → your Linux username
-- `WorkingDirectory=/path/to/CheckAvto` → full path to project
-- `Environment="PATH=/path/to/venv/bin"` → path to venv
-- `ExecStart=/path/to/venv/bin/daphne` → full path to daphne
-
-**Example:**
-```ini
-User=ubuntu
-WorkingDirectory=/home/ubuntu/CheckAvto
-Environment="PATH=/home/ubuntu/CheckAvto/venv/bin"
-ExecStart=/home/ubuntu/CheckAvto/venv/bin/daphne \
-    -u /run/avto-chat.sock \
-    config.asgi:application
-```
+- `User=www-data` → your user
+- `WorkingDirectory=/var/www/CheckAvtoServiceAPIes` → full path to project
+- `ExecStart=/var/www/CheckAvtoServiceAPIes/env/bin/daphne` → full path to daphne
+- `-u /run/avto/avto-chat.sock` → socket path
 
 ---
 
@@ -142,10 +143,13 @@ sudo tail -f /var/log/nginx/access.log
 
 ```bash
 # Check if socket exists
-ls -la /run/avto-chat.sock
+ls -la /run/avto/avto-chat.sock
 
 # Check socket permissions
-sudo ls -la /run/avto-chat.sock
+sudo ls -la /run/avto/avto-chat.sock
+
+# Check all sockets in /run/avto/
+ls -la /run/avto/
 ```
 
 ---
@@ -176,7 +180,7 @@ which daphne  # Should match ExecStart path
 sudo systemctl status avto-chat.service
 
 # Check if socket exists
-ls -la /run/avto-chat.sock
+ls -la /run/avto/avto-chat.sock
 
 # Check Nginx upstream
 sudo nginx -t
@@ -185,7 +189,7 @@ sudo nginx -t
 **4. 502 Bad Gateway:**
 ```bash
 # Check if socket is accessible
-sudo -u www-data test -r /run/avto-chat.sock && echo "OK" || echo "FAIL"
+sudo -u www-data test -r /run/avto/avto-chat.sock && echo "OK" || echo "FAIL"
 
 # Check SELinux (if enabled)
 sudo setsebool -P httpd_can_network_connect 1
