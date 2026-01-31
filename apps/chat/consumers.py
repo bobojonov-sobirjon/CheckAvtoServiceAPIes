@@ -161,6 +161,7 @@ class ChatConsumer(AsyncWebsocketConsumer):
                 'email': message.sender.email,
                 'avatar': message.sender.avatar.url if message.sender.avatar else None
             },
+            'sender_type': 'initiator',  # WebSocket'da yuboruvchi doim initiator
             'message_type': message.message_type,
             'text': message.text,
             'file': message.file.url if message.file else None,

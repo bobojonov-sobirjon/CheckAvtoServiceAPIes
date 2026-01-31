@@ -20,6 +20,7 @@ class ChatParticipantSerializer(serializers.ModelSerializer):
 class ChatMessageSerializer(serializers.ModelSerializer):
     """Сериализатор для сообщения"""
     sender = ChatParticipantSerializer(read_only=True)
+    sender_type = serializers.SerializerMethodField()
     file_url = serializers.SerializerMethodField()
     image_url = serializers.SerializerMethodField()
     audio_url = serializers.SerializerMethodField()
@@ -27,11 +28,19 @@ class ChatMessageSerializer(serializers.ModelSerializer):
     class Meta:
         model = ChatMessage
         fields = [
-            'id', 'room', 'sender', 'message_type', 'text',
+            'id', 'room', 'sender', 'sender_type', 'message_type', 'text',
             'file', 'file_url', 'image', 'image_url', 'audio', 'audio_url',
             'is_read', 'created_at'
         ]
         read_only_fields = ['id', 'sender', 'created_at']
+    
+    def get_sender_type(self, obj):
+        """Определить тип отправителя относительно текущего пользователя"""
+        request = self.context.get('request')
+        if request and request.user:
+            return obj.room.get_sender_type(obj.sender)
+        # Если нет request (WebSocket), то sender всегда initiator
+        return 'initiator'
     
     def get_file_url(self, obj):
         if obj.file:

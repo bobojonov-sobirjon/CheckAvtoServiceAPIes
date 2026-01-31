@@ -136,7 +136,7 @@ class ChatRoomListCreateView(APIView):
             return Response(result_serializer.data, status=status.HTTP_200_OK)
         
         # Создаем новую комнату
-        room = ChatRoom.objects.create()
+        room = ChatRoom.objects.create(initiator=request.user)
         room.participants.add(request.user, participant_id)
         
         result_serializer = ChatRoomSerializer(room, context={'request': request})

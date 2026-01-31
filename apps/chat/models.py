@@ -9,6 +9,15 @@ class ChatRoom(models.Model):
     """
     Chat xonasi - ikki user o'rtasidagi chat
     """
+    initiator = models.ForeignKey(
+        User,
+        on_delete=models.CASCADE,
+        related_name='initiated_chats',
+        verbose_name='Инициатор',
+        help_text='Пользователь, создавший чат',
+        null=True,
+        blank=True
+    )
     participants = models.ManyToManyField(
         User,
         related_name='chat_rooms',
@@ -35,6 +44,19 @@ class ChatRoom(models.Model):
     def get_other_participant(self, user):
         """Получить другого участника чата"""
         return self.participants.exclude(id=user.id).first()
+    
+    def get_sender_type(self, user):
+        """Определить тип отправителя относительно текущего пользователя"""
+        # Если initiator не установлен, используем первого участника
+        if self.initiator is None:
+            first_participant = self.participants.first()
+            if first_participant and first_participant == user:
+                return 'initiator'
+            return 'receiver'
+        
+        if self.initiator == user:
+            return 'initiator'
+        return 'receiver'
 
 
 class ChatMessage(models.Model):
