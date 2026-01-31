@@ -1511,7 +1511,6 @@ class AcceptOrderView(APIView):
             
             # Проверяем баланс пользователя (владельца заказа)
             user_balance = UserBalance.get_or_create_balance(order.user)
-            print(f"DEBUG: user_balance = {user_balance}")
             if not user_balance.has_minimum_balance(1000):
                 return Response({
                     'error': 'На балансе должно быть минимум 1000 ₽, чтобы брать заказы в работу',
@@ -2237,12 +2236,6 @@ GET /api/order/available/?master_id=5&radius=10&page=2&page_size=20
         master_lat = float(master.latitude)
         master_long = float(master.longitude)
         
-        print(f"\n{'='*60}")
-        print(f"ПОИСК ДОСТУПНЫХ ЗАКАЗОВ ДЛЯ МАСТЕРА ID: {master_id}")
-        print(f"Координаты мастера: lat={master_lat}, long={master_long}")
-        print(f"Радиус поиска: {radius} км")
-        print(f"{'='*60}")
-        
         # Получаем заказы без назначенного мастера
         # master=null И masters пустой (ManyToMany)
         from django.db.models import Count
@@ -2269,8 +2262,6 @@ GET /api/order/available/?master_id=5&radius=10&page=2&page_size=20
                 category_id = int(category_filter)
                 category = Category.objects.get(id=category_id)
                 
-                print(f"Фильтр по категории: ID={category_filter}, Name={category.name}, Type={category.type_category}")
-                
                 # Если это by_order категория - используем smart filter через service_type
                 if category.type_category == 'by_order':
                     category_conditions = Q()
@@ -2278,29 +2269,25 @@ GET /api/order/available/?master_id=5&radius=10&page=2&page_size=20
                     if category.service_type:
                         # Ищем заказы с похожим service_type
                         category_conditions |= Q(category__service_type__icontains=category.service_type)
-                        print(f"  Smart filter по service_type: {category.service_type}")
                     
                     if category.name:
                         # Также ищем по имени категории
                         category_conditions |= Q(category__name__icontains=category.name)
-                        print(f"  Smart filter по name: {category.name}")
                     
                     if category_conditions:
                         orders = orders.filter(category_conditions)
                 else:
                     # Для других типов - прямой фильтр по ID
                     orders = orders.filter(category__id=category_id)
-                    print(f"  Прямой filter по ID")
                     
             except Category.DoesNotExist:
-                print(f"  ОШИБКА: Категория {category_filter} не найдена")
+                pass
             except (ValueError, TypeError):
-                print(f"  ОШИБКА: Неверный формат category ID")
+                pass
         
         # Фильтр по району (location)
         if location_filter:
             orders = orders.filter(location__icontains=location_filter)
-            print(f"Фильтр по району: {location_filter}")
         
         # Smart фильтр по типу ТС (car_category)
         if car_category_filter:
@@ -2309,26 +2296,20 @@ GET /api/order/available/?master_id=5&radius=10&page=2&page_size=20
                 car_cat_id = int(car_category_filter)
                 car_category = Category.objects.get(id=car_cat_id)
                 
-                print(f"Фильтр по типу ТС: ID={car_cat_id}, Name={car_category.name}, Type={car_category.type_category}")
-                
                 # Прямой фильтр по ID категории машины
                 orders = orders.filter(car__category__id=car_cat_id)
-                print(f"  Filter по car__category__id")
                 
             except Category.DoesNotExist:
-                print(f"  ОШИБКА: Категория машины {car_category_filter} не найдена")
+                pass
             except (ValueError, TypeError):
-                print(f"  ОШИБКА: Неверный формат car_category ID")
+                pass
         
         # Фильтр по приоритету
         if priority_filter:
             orders = orders.filter(priority=priority_filter)
-            print(f"Фильтр по приоритету: {priority_filter}")
         
         # Убираем дубликаты после фильтров
         orders = orders.distinct()
-        
-        print(f"\nВсего найдено заказов без мастера (после фильтров): {orders.count()}")
         
         # Вычисляем расстояние и фильтруем по радиусу
         filtered_orders = []
@@ -2338,20 +2319,10 @@ GET /api/order/available/?master_id=5&radius=10&page=2&page_size=20
                 float(order.latitude), float(order.longitude)
             )
             
-            print(f"\nOrder ID: {order.id}")
-            print(f"  Координаты: lat={order.latitude}, long={order.longitude}")
-            print(f"  Расстояние от мастера: {distance:.2f} км")
-            print(f"  Радиус: {radius} км")
-            print(f"  Попадает в радиус: {'✅ ДА' if distance <= radius else '❌ НЕТ'}")
-            
             if distance <= radius:
                 # Добавляем расстояние как атрибут
                 order.distance = round(distance, 2)
                 filtered_orders.append(order)
-        
-        print(f"\n{'='*60}")
-        print(f"ИТОГО заказов в радиусе {radius} км: {len(filtered_orders)}")
-        print(f"{'='*60}\n")
         
         # Сортируем по расстоянию (ближайшие сначала)
         filtered_orders.sort(key=lambda x: x.distance)
