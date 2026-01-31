@@ -34,19 +34,12 @@ LOCAL_APPS = [
     'apps.car',
     'apps.master',
     'apps.order',
-    'apps.categories'
-]
-
-THIRD_PARTY_APPS = [
-    'rest_framework',
-    'rest_framework_simplejwt',
-    'drf_spectacular',
-    'corsheaders',
-    'django_filters',
-    *LOCAL_APPS,
+    'apps.categories',
+    'apps.chat',
 ]
 
 INSTALLED_APPS = [
+    'daphne',  # Must be first for WebSocket support
     'django.contrib.sites',
     'django.contrib.admin',
     'django.contrib.auth',
@@ -54,7 +47,13 @@ INSTALLED_APPS = [
     'django.contrib.sessions',
     'django.contrib.messages',
     'django.contrib.staticfiles',
-    *THIRD_PARTY_APPS,
+    'rest_framework',
+    'rest_framework_simplejwt',
+    'drf_spectacular',
+    'corsheaders',
+    'django_filters',
+    'channels',
+    *LOCAL_APPS,
 ]
 
 LOCAL_MIDDLEWARE = [
@@ -92,6 +91,16 @@ TEMPLATES = [
 ]
 
 WSGI_APPLICATION = 'config.wsgi.application'
+
+# ASGI Application for WebSocket support
+ASGI_APPLICATION = 'config.asgi.application'
+
+# Channel Layers Configuration (InMemory - no Redis needed)
+CHANNEL_LAYERS = {
+    'default': {
+        'BACKEND': 'channels.layers.InMemoryChannelLayer'
+    }
+}
 
 
 # Database

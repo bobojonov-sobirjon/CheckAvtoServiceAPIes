@@ -24,6 +24,7 @@ urlpatterns += [
     path('api/master/', include('apps.master.urls')),
     path('api/order/', include('apps.order.urls')),
     path('api/categories/', include('apps.categories.urls')),
+    path('api/chat/', include('apps.chat.urls')),
 ]
 
 urlpatterns += static(settings.STATIC_URL, document_root=settings.STATIC_ROOT)
