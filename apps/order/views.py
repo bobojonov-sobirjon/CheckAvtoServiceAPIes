@@ -1445,7 +1445,22 @@ class AcceptOrderView(APIView):
     
     @extend_schema(
         summary="Принять заказ в работу",
-        description="Принимает заказ в работу с проверкой минимального баланса пользователя (1000 ₽) и списанием 200 ₽ за каждый заказ",
+        description="""
+Принимает заказ в работу с проверкой минимального баланса пользователя (1000 ₽) и списанием 200 ₽ за каждый заказ.
+
+## Проверки баланса:
+1. **Минимальный баланс**: На балансе должно быть минимум 1000 ₽
+2. **Списание за заказ**: С баланса спишется 200 ₽ при принятии заказа
+
+## Response при ошибке баланса:
+```json
+{
+  "error": "Описание ошибки",
+  "current_balance": 500.00,
+  "required_balance": 1000
+}
+```
+        """,
         tags=['Orders'],
         parameters=[
             {'name': 'order_id', 'in': 'path', 'description': 'ID заказа', 'type': 'integer', 'required': True},
@@ -1459,7 +1474,15 @@ class AcceptOrderView(APIView):
                     'balance_after': {'type': 'number'}
                 }
             },
-            400: {'type': 'object', 'properties': {'detail': {'type': 'string'}}},
+            400: {
+                'type': 'object',
+                'properties': {
+                    'error': {'type': 'string'},
+                    'current_balance': {'type': 'number'},
+                    'required_balance': {'type': 'number'},
+                    'required_amount': {'type': 'number'}
+                }
+            },
             404: {'type': 'object', 'properties': {'error': {'type': 'string'}}},
             401: {'type': 'object', 'properties': {'detail': {'type': 'string'}}},
             403: {'type': 'object', 'properties': {'detail': {'type': 'string'}}},
@@ -1490,17 +1513,19 @@ class AcceptOrderView(APIView):
             user_balance = UserBalance.get_or_create_balance(order.user)
             print(f"DEBUG: user_balance = {user_balance}")
             if not user_balance.has_minimum_balance(1000):
-                return Response(
-                    {'error': 'На балансе должно быть минимум 1000 ₽, чтобы брать заказы в работу'}, 
-                    status=status.HTTP_400_BAD_REQUEST
-                )
+                return Response({
+                    'error': 'На балансе должно быть минимум 1000 ₽, чтобы брать заказы в работу',
+                    'current_balance': float(user_balance.amount),
+                    'required_balance': 1000
+                }, status=status.HTTP_400_BAD_REQUEST)
             
             # Проверяем, может ли пользователь позволить себе заказ (200 ₽)
             if not user_balance.can_afford_order(200):
-                return Response(
-                    {'error': 'Недостаточно средств для принятия заказа. Требуется 200 ₽'}, 
-                    status=status.HTTP_400_BAD_REQUEST
-                )
+                return Response({
+                    'error': 'Недостаточно средств для принятия заказа. Требуется 200 ₽',
+                    'current_balance': float(user_balance.amount),
+                    'required_amount': 200
+                }, status=status.HTTP_400_BAD_REQUEST)
             
             # Списываем 200 ₽ с баланса
             if user_balance.deduct_amount(200):
@@ -1519,10 +1544,10 @@ class AcceptOrderView(APIView):
                     'balance_after': float(user_balance.amount)
                 })
             else:
-                return Response(
-                    {'error': 'Ошибка при списании средств с баланса'}, 
-                    status=status.HTTP_400_BAD_REQUEST
-                )
+                return Response({
+                    'error': 'Ошибка при списании средств с баланса',
+                    'current_balance': float(user_balance.amount)
+                }, status=status.HTTP_400_BAD_REQUEST)
         
         except Order.DoesNotExist:
             return Response(
