@@ -11,6 +11,10 @@ urlpatterns = [
     # Available time slots
     path('available-slots/', views.AvailableTimeSlotsView.as_view(), name='available-time-slots'),
     
+    # Order services
+    path('add-services/', views.AddServicesToOrderView.as_view(), name='add-services-to-order'),
+    path('services-list/', views.MasterServicesListView.as_view(), name='master-services-list'),
+    
     # Order CRUD operations
     path('', views.OrderListCreateView.as_view(), name='order-list-create'),
     path('<int:id>/', views.OrderDetailView.as_view(), name='order-detail'),

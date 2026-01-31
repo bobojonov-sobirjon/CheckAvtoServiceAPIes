@@ -1,6 +1,6 @@
 from rest_framework import serializers
 from django.contrib.auth import get_user_model
-from .models import Order, OrderStatus, OrderPriority, OrderType, Rating
+from .models import Order, OrderStatus, OrderPriority, OrderType, Rating, OrderService
 from apps.car.models import Car
 from apps.categories.models import Category
 from apps.master.models import Master
@@ -22,6 +22,7 @@ class OrderSerializer(serializers.ModelSerializer):
     order_type_display = serializers.CharField(source='get_order_type_display', read_only=True)
     car_data = serializers.SerializerMethodField()
     category_data = serializers.SerializerMethodField()
+    services = serializers.SerializerMethodField()
 
     class Meta:
         model = Order
@@ -31,6 +32,7 @@ class OrderSerializer(serializers.ModelSerializer):
             'text', 'status', 'status_display', 'priority', 'priority_display',
             'location', 'latitude', 'longitude', 'master', 'masters',
             'scheduled_date', 'scheduled_time_start', 'scheduled_time_end',
+            'discount', 'services',
             'created_at', 'updated_at'
         ]
         read_only_fields = ['id', 'created_at', 'updated_at']
@@ -86,6 +88,16 @@ class OrderSerializer(serializers.ModelSerializer):
                 'type_category': category.type_category
             }
             for category in categories
+        ]
+    
+    def get_services(self, obj):
+        """Получить услуги заказа"""
+        from apps.master.serializers import MasterServiceItemsSerializer
+        
+        order_services = obj.order_services.all().select_related('master_service_item')
+        return [
+            MasterServiceItemsSerializer(os.master_service_item).data
+            for os in order_services if os.master_service_item
         ]
 
     def validate_latitude(self, value):
@@ -444,3 +456,57 @@ class RatingSerializer(serializers.ModelSerializer):
         """Создание рейтинга с автоматическим назначением пользователя"""
         validated_data['user'] = self.context['request'].user
         return super().create(validated_data)
+
+
+class OrderServiceSerializer(serializers.ModelSerializer):
+    """Сериализатор для услуг в заказе"""
+    service_details = serializers.SerializerMethodField()
+    
+    class Meta:
+        model = OrderService
+        fields = ['id', 'order', 'master_service_item', 'service_details', 'created_at']
+        read_only_fields = ['id', 'created_at']
+    
+    def get_service_details(self, obj):
+        """Получить детали услуги"""
+        if obj.master_service_item:
+            from apps.master.serializers import MasterServiceItemsSerializer
+            return MasterServiceItemsSerializer(obj.master_service_item).data
+        return None
+
+
+class AddServicesToOrderSerializer(serializers.Serializer):
+    """Сериализатор для добавления услуг к заказу"""
+    order_id = serializers.IntegerField()
+    services_list = serializers.ListField(
+        child=serializers.IntegerField(),
+        allow_empty=False,
+        help_text='Список ID услуг мастера (MasterServiceItems)'
+    )
+    
+    def validate_order_id(self, value):
+        """Проверка существования заказа"""
+        try:
+            Order.objects.get(id=value)
+        except Order.DoesNotExist:
+            raise serializers.ValidationError(f'Заказ с ID {value} не найден')
+        return value
+    
+    def validate_services_list(self, value):
+        """Проверка существования услуг"""
+        from apps.master.models import MasterServiceItems
+        
+        if not value:
+            raise serializers.ValidationError('Список услуг не может быть пустым')
+        
+        # Проверяем существование всех услуг
+        existing_services = MasterServiceItems.objects.filter(id__in=value)
+        existing_ids = set(existing_services.values_list('id', flat=True))
+        
+        invalid_ids = set(value) - existing_ids
+        if invalid_ids:
+            raise serializers.ValidationError(
+                f'Услуги с ID {list(invalid_ids)} не найдены'
+            )
+        
+        return value

@@ -128,6 +128,13 @@ class Order(models.Model):
         verbose_name='Конец визита',
         help_text='Время окончания визита (например: 11:00)'
     )
+    discount = models.DecimalField(
+        max_digits=10,
+        decimal_places=2,
+        default=0.00,
+        verbose_name='Скидка',
+        help_text='Скидка на заказ (в процентах или сумме)'
+    )
     created_at = models.DateTimeField(
         auto_now_add=True,
         verbose_name='Дата создания'
@@ -251,6 +258,38 @@ class Rating(models.Model):
     def save(self, *args, **kwargs):
         self.clean()
         super().save(*args, **kwargs)
+
+
+class OrderService(models.Model):
+    """
+    Модель связи заказа с услугами мастера
+    Хранит выбранные услуги для конкретного заказа
+    """
+    order = models.ForeignKey(
+        Order,
+        on_delete=models.CASCADE,
+        related_name='order_services',
+        verbose_name='Заказ'
+    )
+    master_service_item = models.ForeignKey(
+        'master.MasterServiceItems',
+        on_delete=models.CASCADE,
+        related_name='order_services',
+        verbose_name='Услуга мастера'
+    )
+    created_at = models.DateTimeField(
+        auto_now_add=True,
+        verbose_name='Дата добавления'
+    )
+
+    class Meta:
+        verbose_name = 'Услуга в заказе'
+        verbose_name_plural = 'Услуги в заказах'
+        ordering = ['-created_at']
+        unique_together = ['order', 'master_service_item']
+
+    def __str__(self):
+        return f"Заказ #{self.order.id} - {self.master_service_item.name}"
 
 
 class ScheduledOrderManager(models.Manager):

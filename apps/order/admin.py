@@ -2,7 +2,7 @@ from django.contrib import admin
 from django.utils.html import format_html
 from django.urls import reverse
 from django.utils.safestring import mark_safe
-from .models import Order, OrderStatus, OrderPriority, OrderType, ScheduledOrder, SOSOrder
+from .models import Order, OrderStatus, OrderPriority, OrderType, ScheduledOrder, SOSOrder, OrderService
 
 
 class BaseOrderAdmin(admin.ModelAdmin):
@@ -223,6 +223,53 @@ class OrderPriorityFilter(admin.SimpleListFilter):
         if self.value():
             return queryset.filter(priority=self.value())
         return queryset
+
+
+@admin.register(OrderService)
+class OrderServiceAdmin(admin.ModelAdmin):
+    """Админка для услуг в заказе"""
+    
+    list_display = ['id', 'order_link', 'service_name', 'service_price', 'created_at']
+    list_filter = ['created_at', 'order__status']
+    search_fields = [
+        'order__id', 'master_service_item__name', 
+        'order__user__first_name', 'order__user__last_name'
+    ]
+    readonly_fields = ['id', 'created_at']
+    list_per_page = 25
+    
+    def order_link(self, obj):
+        """Ссылка на заказ"""
+        if obj.order:
+            url = reverse('admin:order_order_change', args=[obj.order.id])
+            return format_html('<a href="{}">Заказ #{}</a>', url, obj.order.id)
+        return '-'
+    order_link.short_description = 'Заказ'
+    order_link.admin_order_field = 'order__id'
+    
+    def service_name(self, obj):
+        """Название услуги"""
+        return obj.master_service_item.name if obj.master_service_item else '-'
+    service_name.short_description = 'Услуга'
+    
+    def service_price(self, obj):
+        """Цена услуги"""
+        if obj.master_service_item:
+            price_from = obj.master_service_item.price_from
+            price_to = obj.master_service_item.price_to
+            if price_from and price_to:
+                return f"{price_from} - {price_to} сум"
+            elif price_from:
+                return f"от {price_from} сум"
+        return '-'
+    service_price.short_description = 'Цена'
+    
+    def get_queryset(self, request):
+        """Оптимизация запросов"""
+        return super().get_queryset(request).select_related(
+            'order', 'order__user', 'master_service_item', 
+            'master_service_item__master_service'
+        )
 
 
 # Дополнительные настройки админки

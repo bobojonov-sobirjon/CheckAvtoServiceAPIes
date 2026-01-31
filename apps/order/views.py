@@ -11,8 +11,11 @@ from django.contrib.auth import get_user_model
 from drf_spectacular.utils import extend_schema, OpenApiParameter, OpenApiExample
 from drf_spectacular.types import OpenApiTypes
 
-from .models import Order, OrderStatus, OrderType, Rating
-from .serializers import OrderSerializer, OrderCreateSerializer, OrderUpdateSerializer, RatingSerializer
+from .models import Order, OrderStatus, OrderType, Rating, OrderService
+from .serializers import (
+    OrderSerializer, OrderCreateSerializer, OrderUpdateSerializer, RatingSerializer,
+    AddServicesToOrderSerializer, OrderServiceSerializer
+)
 from .permissions import IsOrderOwnerOrMaster, IsOrderOwner, IsMaster
 from apps.master.models import Master
 from apps.master.serializers import MasterSerializer
@@ -1972,4 +1975,213 @@ GET /api/order/available/?master_id=5&radius=10&page=2&page_size=20
             return paginator.get_paginated_response(serializer.data)
         
         serializer = OrderSerializer(filtered_orders, many=True, context={'request': request})
+        return Response(serializer.data)
+
+
+class AddServicesToOrderView(APIView):
+    """
+    API для добавления услуг к заказу
+    """
+    permission_classes = [IsAuthenticated]
+    
+    @extend_schema(
+        summary="Добавить услуги к заказу",
+        description="""
+## Описание
+Добавляет выбранные услуги мастера к заказу.
+
+## Request Body
+- `order_id`: ID заказа
+- `services_list`: Список ID услуг мастера (MasterServiceItems)
+
+## Пример запроса:
+```json
+{
+  "order_id": 5,
+  "services_list": [1, 2, 3, 4, 5]
+}
+```
+
+## Response
+Возвращает список добавленных услуг с полной информацией о каждой услуге.
+        """,
+        tags=['Orders'],
+        request=AddServicesToOrderSerializer,
+        responses={
+            201: OrderServiceSerializer(many=True),
+            400: {
+                'type': 'object',
+                'properties': {
+                    'error': {'type': 'string'}
+                },
+                'examples': {
+                    'application/json': {
+                        'example': {'error': 'Заказ с ID 999 не найден'}
+                    }
+                }
+            },
+            401: {'type': 'object', 'properties': {'detail': {'type': 'string'}}},
+        }
+    )
+    def post(self, request):
+        """Добавить услуги к заказу"""
+        serializer = AddServicesToOrderSerializer(data=request.data)
+        
+        if not serializer.is_valid():
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        
+        order_id = serializer.validated_data['order_id']
+        services_list = serializer.validated_data['services_list']
+        
+        # Получаем заказ
+        try:
+            order = Order.objects.get(id=order_id)
+        except Order.DoesNotExist:
+            return Response(
+                {'error': f'Заказ с ID {order_id} не найден'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+        
+        # Создаем связи OrderService
+        from apps.master.models import MasterServiceItems
+        created_services = []
+        
+        for service_id in services_list:
+            try:
+                service_item = MasterServiceItems.objects.get(id=service_id)
+                # Используем get_or_create чтобы избежать дубликатов
+                order_service, created = OrderService.objects.get_or_create(
+                    order=order,
+                    master_service_item=service_item
+                )
+                created_services.append(order_service)
+            except MasterServiceItems.DoesNotExist:
+                continue
+        
+        # Сериализуем результат
+        result_serializer = OrderServiceSerializer(created_services, many=True)
+        return Response(result_serializer.data, status=status.HTTP_201_CREATED)
+
+
+class MasterServicesListView(APIView):
+    """
+    API для получения услуг мастера
+    """
+    permission_classes = [IsAuthenticated]
+    
+    @extend_schema(
+        summary="Получить услуги мастера",
+        description="""
+## Описание
+Возвращает список всех услуг (MasterServiceItems) для указанного мастера.
+Формат ответа аналогичен формату в detail мастера.
+
+## Параметры
+- `master_id`: ID мастера (обязательный)
+
+## Пример запроса:
+```
+GET /api/order/services-list/?master_id=5
+```
+
+## Response
+Возвращает список услуг мастера с полной информацией:
+- ID услуги
+- Название
+- Цена (от - до)
+- Категория
+- Мастер
+        """,
+        tags=['Orders'],
+        parameters=[
+            OpenApiParameter(
+                name='master_id',
+                type=OpenApiTypes.INT,
+                location=OpenApiParameter.QUERY,
+                description='ID мастера',
+                required=True
+            ),
+        ],
+        responses={
+            200: {
+                'type': 'array',
+                'items': {
+                    'type': 'object',
+                    'properties': {
+                        'id': {'type': 'integer'},
+                        'name': {'type': 'string'},
+                        'price_from': {'type': 'number'},
+                        'price_to': {'type': 'number'},
+                        'category': {'type': 'object'},
+                        'master_service': {'type': 'integer'},
+                    }
+                },
+                'example': [
+                    {
+                        'id': 1,
+                        'name': 'Замена масла',
+                        'price_from': 1000.0,
+                        'price_to': 2000.0,
+                        'category': {
+                            'id': 1,
+                            'name': 'Ремонт двигателя'
+                        },
+                        'master_service': 5
+                    }
+                ]
+            },
+            400: {
+                'type': 'object',
+                'properties': {'error': {'type': 'string'}},
+                'example': {'error': 'Параметр master_id обязателен'}
+            },
+            404: {
+                'type': 'object',
+                'properties': {'error': {'type': 'string'}},
+                'example': {'error': 'Мастер не найден'}
+            },
+            401: {'type': 'object', 'properties': {'detail': {'type': 'string'}}},
+        }
+    )
+    def get(self, request):
+        """Получить услуги мастера"""
+        master_id = request.query_params.get('master_id')
+        
+        if not master_id:
+            return Response(
+                {'error': 'Параметр master_id обязателен'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        try:
+            master_id = int(master_id)
+        except ValueError:
+            return Response(
+                {'error': 'Неверный формат master_id'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # Проверяем существование мастера
+        try:
+            master = Master.objects.get(id=master_id)
+        except Master.DoesNotExist:
+            return Response(
+                {'error': 'Мастер не найден'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+        
+        # Получаем все MasterServiceItems для этого мастера
+        from apps.master.models import MasterServiceItems, MasterService
+        from apps.master.serializers import MasterServiceItemsSerializer
+        
+        # Находим все MasterService для этого мастера
+        master_services = MasterService.objects.filter(master=master)
+        
+        # Получаем все items этих services
+        service_items = MasterServiceItems.objects.filter(
+            master_service__in=master_services
+        ).select_related('category', 'master_service')
+        
+        # Сериализуем
+        serializer = MasterServiceItemsSerializer(service_items, many=True)
         return Response(serializer.data)
