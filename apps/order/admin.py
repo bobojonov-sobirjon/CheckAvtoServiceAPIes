@@ -183,9 +183,11 @@ class SOSOrderAdmin(BaseOrderAdmin):
     def coordinates(self, obj):
         """GPS координаты"""
         if obj.latitude and obj.longitude:
+            lat_str = f"{obj.latitude:.4f}"
+            lon_str = f"{obj.longitude:.4f}"
             return format_html(
-                '<a href="https://www.google.com/maps?q={},{}" target="_blank">{:.4f}, {:.4f}</a>',
-                obj.latitude, obj.longitude, obj.latitude, obj.longitude
+                '<a href="https://www.google.com/maps?q={},{}" target="_blank">{}, {}</a>',
+                obj.latitude, obj.longitude, lat_str, lon_str
             )
         return '-'
     coordinates.short_description = 'GPS координаты'
