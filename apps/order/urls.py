@@ -30,6 +30,7 @@ urlpatterns = [
     # Order status management
     path('<int:order_id>/status/', views.UpdateOrderStatusView.as_view(), name='update-status'),
     path('<int:order_id>/accept/', views.AcceptOrderView.as_view(), name='accept-order'),
+    path('<int:order_id>/complete/', views.CompleteOrderView.as_view(), name='complete-order'),
     
     # Rating endpoints
     path('ratings/', views.RatingCreateView.as_view(), name='rating-create'),

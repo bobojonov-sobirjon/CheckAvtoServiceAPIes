@@ -1368,6 +1368,99 @@ class AcceptOrderView(APIView):
             )
 
 
+class CompleteOrderView(APIView):
+    """
+    API для завершения заказа (отметка как выполненного)
+    """
+    permission_classes = [IsAuthenticated]
+    
+    @extend_schema(
+        summary="Завершить заказ",
+        description="""
+## Описание
+Завершает заказ, устанавливая статус **COMPLETED** (Завершен).
+
+## 🎯 Когда использовать?
+- ✅ Работа по заказу выполнена
+- ✅ Клиент доволен результатом
+- ✅ Заказ готов к закрытию
+- ✅ Можно оставить рейтинг и отзыв
+
+## Требования:
+- Заказ должен существовать
+- Пользователь должен быть авторизован
+
+## Пример запроса:
+```
+POST /api/order/5/complete/
+```
+
+## Response:
+```json
+{
+  "message": "Заказ успешно завершен",
+  "order": {
+    "id": 5,
+    "status": "completed",
+    "status_display": "Завершен",
+    "user": {...},
+    "master": {...},
+    "text": "Замена масла",
+    "created_at": "2026-01-30T10:00:00Z"
+  }
+}
+```
+
+## Workflow:
+1. Мастер завершает работу по заказу
+2. Отправляет POST запрос на `/api/order/{order_id}/complete/`
+3. Заказ переходит в статус **COMPLETED**
+4. Клиент может оставить рейтинг и отзыв
+        """,
+        tags=['Orders'],
+        parameters=[
+            {'name': 'order_id', 'in': 'path', 'description': 'ID заказа', 'type': 'integer', 'required': True},
+        ],
+        responses={
+            200: {
+                'type': 'object',
+                'properties': {
+                    'message': {'type': 'string', 'example': 'Заказ успешно завершен'},
+                    'order': {'$ref': '#/components/schemas/Order'}
+                }
+            },
+            404: {
+                'type': 'object',
+                'properties': {'error': {'type': 'string', 'example': 'Заказ не найден'}}
+            },
+            401: {
+                'type': 'object',
+                'properties': {'detail': {'type': 'string', 'example': 'Authentication credentials were not provided.'}}
+            },
+        }
+    )
+    def post(self, request, order_id):
+        """Завершить заказ (установить статус COMPLETED)"""
+        try:
+            order = Order.objects.get(id=order_id)
+            
+            # Устанавливаем статус COMPLETED
+            order.status = OrderStatus.COMPLETED
+            order.save()
+            
+            serializer = OrderSerializer(order, context={'request': request})
+            return Response({
+                'message': 'Заказ успешно завершен',
+                'order': serializer.data
+            }, status=status.HTTP_200_OK)
+        
+        except Order.DoesNotExist:
+            return Response(
+                {'error': 'Заказ не найден'}, 
+                status=status.HTTP_404_NOT_FOUND
+            )
+
+
 def _get_area_filter_for_orders(request):
     """Получение фильтра по прямоугольной области для orders_by_master - Order model ichidagi lat/long bilan"""
     # Получаем параметры точек
