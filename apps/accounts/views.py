@@ -482,3 +482,77 @@ class UpdateTelegramChatIdView(APIView):
             'success': True,
             'message': 'Telegram Chat ID успешно обновлен'
         }, status=status.HTTP_200_OK)
+
+
+class UserDetailsByIdView(APIView):
+    """
+    Получение информации о пользователе по ID
+    """
+    permission_classes = [AllowAny]
+    
+    @extend_schema(
+        summary="Получить информацию о пользователе по ID",
+        description="""
+## Получить детальную информацию о пользователе
+
+Возвращает полную информацию о пользователе по его ID.
+Этот endpoint может использоваться для:
+- Просмотра профиля мастера
+- Получения информации о водителе
+- Просмотра рейтинга и отзывов пользователя
+
+## Response включает:
+- Основную информацию (имя, email, телефон)
+- Роли пользователя (Driver, Master)
+- Баланс (если есть)
+- Рейтинг и отзывы (для мастеров)
+- Статистику (количество заказов, рекомендации)
+
+## Примеры использования:
+
+**Просмотр мастера:**
+```
+GET /api/auth/user/5/
+```
+
+**Просмотр водителя:**
+```
+GET /api/auth/user/10/
+```
+        """,
+        parameters=[
+            OpenApiParameter(
+                name='user_id',
+                type=OpenApiTypes.INT,
+                location=OpenApiParameter.PATH,
+                description='ID пользователя',
+                required=True
+            )
+        ],
+        responses={
+            200: UserDetailsSerializer,
+            404: {
+                'type': 'object',
+                'properties': {
+                    'success': {'type': 'boolean', 'example': False},
+                    'error': {'type': 'string', 'example': 'Пользователь не найден'}
+                }
+            }
+        },
+        tags=['User Profile']
+    )
+    def get(self, request, user_id):
+        """Получение информации о пользователе по ID"""
+        try:
+            user = CustomUser.objects.get(id=user_id)
+        except CustomUser.DoesNotExist:
+            return Response({
+                'success': False,
+                'error': 'Пользователь не найден'
+            }, status=status.HTTP_404_NOT_FOUND)
+        
+        serializer = UserDetailsSerializer(user, context={'request': request})
+        return Response({
+            'success': True,
+            'user': serializer.data
+        }, status=status.HTTP_200_OK)

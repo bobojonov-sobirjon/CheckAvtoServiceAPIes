@@ -1,7 +1,7 @@
 from django.urls import path
 from .views import (
     LoginView, CheckSMSCodeView, SMSServiceStatusView, 
-    UserDetailsView, FAQListView, UpdateTelegramChatIdView,
+    UserDetailsView, UserDetailsByIdView, FAQListView, UpdateTelegramChatIdView,
     HealthCheckView
 )
 
@@ -18,6 +18,7 @@ urlpatterns = [
     
     # User details endpoints
     path('user/', UserDetailsView.as_view(), name='user_details'),
+    path('user/<int:user_id>/', UserDetailsByIdView.as_view(), name='user_details_by_id'),
     
     # Telegram Chat ID update endpoint
     path('update-telegram-chat-id/', UpdateTelegramChatIdView.as_view(), name='update_telegram_chat_id'),
