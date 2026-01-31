@@ -193,6 +193,16 @@ class Order(models.Model):
         return False
 
 
+class ReviewTag(models.TextChoices):
+    """Теги для отзывов о работе мастера"""
+    FAST_WORK = 'fast_work', 'Оперативная работа'
+    NO_OVERPAY = 'no_overpay', 'Без переплат'
+    DEADLINE = 'deadline', 'Соблюдение сроков'
+    ALWAYS_AVAILABLE = 'always_available', 'Всегда на связи'
+    INDIVIDUAL_APPROACH = 'individual_approach', 'Индивидуальный подход'
+    POLITE = 'polite', 'Вежливость'
+
+
 class Rating(models.Model):
     """Модель рейтинга для мастеров"""
     order = models.ForeignKey(
@@ -258,6 +268,136 @@ class Rating(models.Model):
     def save(self, *args, **kwargs):
         self.clean()
         super().save(*args, **kwargs)
+
+
+class Review(models.Model):
+    """
+    Модель отзыва о заказе и мастере
+    Связывает Order + User (reviewer) + Masters (from order)
+    """
+    order = models.OneToOneField(
+        Order,
+        on_delete=models.CASCADE,
+        related_name='review',
+        verbose_name='Заказ',
+        help_text='Заказ, к которому относится отзыв'
+    )
+    reviewer = models.ForeignKey(
+        User,
+        on_delete=models.CASCADE,
+        related_name='reviews_given',
+        verbose_name='Автор отзыва',
+        help_text='Пользователь, который оставил отзыв'
+    )
+    rating = models.PositiveIntegerField(
+        verbose_name='Рейтинг',
+        help_text='Рейтинг от 1 до 5'
+    )
+    comment = models.TextField(
+        blank=True,
+        null=True,
+        verbose_name='Комментарий',
+        help_text='Текст отзыва'
+    )
+    tag = models.CharField(
+        max_length=50,
+        choices=ReviewTag.choices,
+        verbose_name='Тег отзыва',
+        help_text='Что понравилось в работе мастера'
+    )
+    created_at = models.DateTimeField(
+        auto_now_add=True,
+        verbose_name='Дата создания'
+    )
+    updated_at = models.DateTimeField(
+        auto_now=True,
+        verbose_name='Дата обновления'
+    )
+
+    class Meta:
+        verbose_name = 'Отзыв'
+        verbose_name_plural = 'Отзывы'
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return f"Отзыв для заказа #{self.order.id} от {self.reviewer.get_full_name()}"
+
+    def clean(self):
+        """Валидация модели"""
+        if self.rating < 1 or self.rating > 5:
+            raise ValidationError({'rating': 'Рейтинг должен быть от 1 до 5'})
+
+    def save(self, *args, **kwargs):
+        self.clean()
+        super().save(*args, **kwargs)
+        
+        # После сохранения отзыва обновляем рейтинг всех мастеров из заказа
+        self.update_masters_rating()
+    
+    def update_masters_rating(self):
+        """Обновляет рейтинг всех мастеров, назначенных на заказ"""
+        # Обновляем рейтинг главного мастера (master field)
+        if self.order.master:
+            self._update_user_rating(self.order.master.user)
+        
+        # Обновляем рейтинг всех мастеров из masters (ManyToMany)
+        for master_user in self.order.masters.all():
+            self._update_user_rating(master_user)
+    
+    def _update_user_rating(self, user):
+        """Обновляет средний рейтинг пользователя на основе всех его отзывов"""
+        # Находим все заказы, где пользователь был мастером
+        from django.db.models import Avg
+        
+        # Заказы где user - главный мастер
+        orders_as_main_master = Order.objects.filter(master__user=user)
+        # Заказы где user в списке masters
+        orders_as_assigned_master = Order.objects.filter(masters=user)
+        
+        # Объединяем и получаем уникальные
+        all_order_ids = set(orders_as_main_master.values_list('id', flat=True)) | \
+                       set(orders_as_assigned_master.values_list('id', flat=True))
+        
+        # Получаем средний рейтинг по всем отзывам для этих заказов
+        avg_rating = Review.objects.filter(order_id__in=all_order_ids).aggregate(Avg('rating'))['rating__avg']
+        
+        # Обновляем или создаем UserRating
+        if avg_rating:
+            UserRating.objects.update_or_create(
+                user=user,
+                defaults={'average_rating': round(avg_rating, 2)}
+            )
+
+
+class UserRating(models.Model):
+    """
+    Модель для хранения среднего рейтинга пользователя (мастера)
+    """
+    user = models.OneToOneField(
+        User,
+        on_delete=models.CASCADE,
+        related_name='rating_profile',
+        verbose_name='Пользователь'
+    )
+    average_rating = models.DecimalField(
+        max_digits=3,
+        decimal_places=2,
+        default=0.00,
+        verbose_name='Средний рейтинг',
+        help_text='Средний рейтинг на основе всех отзывов'
+    )
+    updated_at = models.DateTimeField(
+        auto_now=True,
+        verbose_name='Дата обновления'
+    )
+
+    class Meta:
+        verbose_name = 'Рейтинг пользователя'
+        verbose_name_plural = 'Рейтинги пользователей'
+        ordering = ['-average_rating']
+
+    def __str__(self):
+        return f"{self.user.get_full_name()} - {self.average_rating} ⭐"
 
 
 class OrderService(models.Model):

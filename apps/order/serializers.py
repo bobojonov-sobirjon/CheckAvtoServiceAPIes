@@ -1,6 +1,6 @@
 from rest_framework import serializers
 from django.contrib.auth import get_user_model
-from .models import Order, OrderStatus, OrderPriority, OrderType, Rating, OrderService
+from .models import Order, OrderStatus, OrderPriority, OrderType, Rating, OrderService, Review, ReviewTag, UserRating
 from apps.car.models import Car
 from apps.categories.models import Category
 from apps.master.models import Master
@@ -554,4 +554,83 @@ class AddMastersToOrderSerializer(serializers.Serializer):
                 f'Пользователи с ID {list(invalid_ids)} не найдены'
             )
         
+        return value
+
+
+class ReviewSerializer(serializers.ModelSerializer):
+    """Сериализатор для отзывов"""
+    reviewer_info = serializers.SerializerMethodField()
+    tag_display = serializers.CharField(source='get_tag_display', read_only=True)
+    order_info = serializers.SerializerMethodField()
+    
+    class Meta:
+        model = Review
+        fields = [
+            'id', 'order', 'order_info', 'reviewer', 'reviewer_info', 
+            'rating', 'comment', 'tag', 'tag_display', 'created_at', 'updated_at'
+        ]
+        read_only_fields = ['id', 'reviewer', 'created_at', 'updated_at']
+    
+    def get_reviewer_info(self, obj):
+        """Информация об авторе отзыва"""
+        if obj.reviewer:
+            return {
+                'id': obj.reviewer.id,
+                'full_name': obj.reviewer.get_full_name(),
+                'email': obj.reviewer.email,
+                'avatar': obj.reviewer.avatar.url if obj.reviewer.avatar else None
+            }
+        return None
+    
+    def get_order_info(self, obj):
+        """Краткая информация о заказе"""
+        if obj.order:
+            return {
+                'id': obj.order.id,
+                'text': obj.order.text,
+                'status': obj.order.status,
+                'created_at': obj.order.created_at
+            }
+        return None
+
+
+class ReviewCreateSerializer(serializers.Serializer):
+    """Сериализатор для создания отзыва"""
+    order_id = serializers.IntegerField(
+        help_text='ID заказа'
+    )
+    rating = serializers.IntegerField(
+        min_value=1,
+        max_value=5,
+        help_text='Рейтинг от 1 до 5'
+    )
+    comment = serializers.CharField(
+        required=False,
+        allow_blank=True,
+        help_text='Комментарий к отзыву'
+    )
+    tag = serializers.ChoiceField(
+        choices=ReviewTag.choices,
+        help_text='Что понравилось в работе мастера (выберите одно)'
+    )
+    
+    def validate_order_id(self, value):
+        """Проверка существования заказа"""
+        try:
+            order = Order.objects.get(id=value)
+            
+            # Проверяем, что заказ завершен
+            if order.status != OrderStatus.COMPLETED:
+                raise serializers.ValidationError(
+                    'Отзыв можно оставить только для завершенного заказа'
+                )
+            
+            # Проверяем, что отзыв еще не оставлен
+            if Review.objects.filter(order=order).exists():
+                raise serializers.ValidationError(
+                    'Отзыв для этого заказа уже оставлен'
+                )
+            
+        except Order.DoesNotExist:
+            raise serializers.ValidationError(f'Заказ с ID {value} не найден')
         return value

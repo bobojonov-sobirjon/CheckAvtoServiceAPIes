@@ -35,5 +35,8 @@ urlpatterns = [
     # Rating endpoints
     path('ratings/', views.RatingCreateView.as_view(), name='rating-create'),
     path('ratings/list/', views.RatingListView.as_view(), name='rating-list'),
+    
+    # Review endpoints
+    path('reviews/create/', views.CreateReviewView.as_view(), name='create-review'),
 ]
 

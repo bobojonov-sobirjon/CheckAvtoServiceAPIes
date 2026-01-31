@@ -11,10 +11,11 @@ from django.contrib.auth import get_user_model
 from drf_spectacular.utils import extend_schema, OpenApiParameter, OpenApiExample
 from drf_spectacular.types import OpenApiTypes
 
-from .models import Order, OrderStatus, OrderType, Rating, OrderService
+from .models import Order, OrderStatus, OrderType, Rating, OrderService, Review, ReviewTag
 from .serializers import (
     OrderSerializer, OrderCreateSerializer, OrderUpdateSerializer, RatingSerializer,
-    AddServicesToOrderSerializer, OrderServiceSerializer, AddMastersToOrderSerializer
+    AddServicesToOrderSerializer, OrderServiceSerializer, AddMastersToOrderSerializer,
+    ReviewSerializer, ReviewCreateSerializer
 )
 from .permissions import IsOrderOwnerOrMaster, IsOrderOwner, IsMaster
 from apps.master.models import Master
@@ -1457,6 +1458,132 @@ POST /api/order/5/complete/
         except Order.DoesNotExist:
             return Response(
                 {'error': 'Заказ не найден'}, 
+                status=status.HTTP_404_NOT_FOUND
+            )
+
+
+class CreateReviewView(APIView):
+    """
+    API для создания отзыва о заказе и мастерах
+    """
+    permission_classes = [IsAuthenticated]
+    
+    @extend_schema(
+        summary="Создать отзыв о заказе",
+        description="""
+## Описание
+Создает отзыв о выполненном заказе. Рейтинг автоматически применяется ко всем мастерам, 
+назначенным на заказ (главный мастер и все мастера из списка).
+
+## 🎯 Когда использовать?
+- ✅ После завершения заказа (status = COMPLETED)
+- ✅ Клиент хочет оценить работу мастера
+- ✅ Один раз на заказ (повторные отзывы запрещены)
+
+## Request Body
+- `order_id`: ID завершенного заказа (обязательно)
+- `rating`: Рейтинг от 1 до 5 (обязательно)
+- `comment`: Текст отзыва (необязательно)
+- `tag`: Что понравилось в работе мастера - выберите ОДНО (обязательно):
+  - `fast_work` - Оперативная работа
+  - `no_overpay` - Без переплат
+  - `deadline` - Соблюдение сроков
+  - `always_available` - Всегда на связи
+  - `individual_approach` - Индивидуальный подход
+  - `polite` - Вежливость
+
+## Пример запроса:
+```json
+{
+  "order_id": 5,
+  "rating": 5,
+  "comment": "Отличная работа! Быстро и качественно.",
+  "tag": "fast_work"
+}
+```
+
+## Response:
+```json
+{
+  "message": "Отзыв успешно создан. Рейтинг применен к мастерам.",
+  "review": {
+    "id": 1,
+    "order": 5,
+    "rating": 5,
+    "comment": "Отличная работа!",
+    "tag": "fast_work",
+    "tag_display": "Оперативная работа",
+    "created_at": "2026-01-31T10:00:00Z"
+  }
+}
+```
+
+## Что происходит автоматически:
+1. ✅ Отзыв сохраняется в БД
+2. ✅ Рейтинг применяется ко ВСЕМ мастерам из заказа:
+   - Главный мастер (order.master)
+   - Все мастера из списка (order.masters)
+3. ✅ Обновляется средний рейтинг каждого мастера
+4. ✅ Рейтинг появляется в профиле мастера
+        """,
+        tags=['Orders'],
+        request=ReviewCreateSerializer,
+        responses={
+            201: ReviewSerializer,
+            400: {
+                'type': 'object',
+                'properties': {'error': {'type': 'string'}},
+                'examples': {
+                    'not_completed': {'value': {'error': 'Отзыв можно оставить только для завершенного заказа'}},
+                    'already_exists': {'value': {'error': 'Отзыв для этого заказа уже оставлен'}}
+                }
+            },
+            404: {
+                'type': 'object',
+                'properties': {'error': {'type': 'string'}},
+                'example': {'error': 'Заказ не найден'}
+            },
+            401: {
+                'type': 'object',
+                'properties': {'detail': {'type': 'string'}}
+            },
+        }
+    )
+    def post(self, request):
+        """Создать отзыв о заказе"""
+        serializer = ReviewCreateSerializer(data=request.data)
+        
+        if not serializer.is_valid():
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        
+        order_id = serializer.validated_data['order_id']
+        rating = serializer.validated_data['rating']
+        comment = serializer.validated_data.get('comment', '')
+        tag = serializer.validated_data['tag']
+        
+        try:
+            order = Order.objects.get(id=order_id)
+            
+            # Создаем отзыв
+            review = Review.objects.create(
+                order=order,
+                reviewer=request.user,
+                rating=rating,
+                comment=comment,
+                tag=tag
+            )
+            
+            # Рейтинг автоматически применится ко всем мастерам через save() метод
+            
+            result_serializer = ReviewSerializer(review)
+            return Response({
+                'message': 'Отзыв успешно создан. Рейтинг применен к мастерам.',
+                'review': result_serializer.data
+            }, status=status.HTTP_201_CREATED)
+        
+        except Order.DoesNotExist:
+            return Response(
+                {'error': 'Заказ не найден'},
                 status=status.HTTP_404_NOT_FOUND
             )
 

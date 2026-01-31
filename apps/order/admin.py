@@ -2,7 +2,7 @@ from django.contrib import admin
 from django.utils.html import format_html
 from django.urls import reverse
 from django.utils.safestring import mark_safe
-from .models import Order, OrderStatus, OrderPriority, OrderType, ScheduledOrder, SOSOrder, OrderService
+from .models import Order, OrderStatus, OrderPriority, OrderType, ScheduledOrder, SOSOrder, OrderService, Review, UserRating
 
 
 class BaseOrderAdmin(admin.ModelAdmin):
@@ -270,6 +270,105 @@ class OrderServiceAdmin(admin.ModelAdmin):
             'order', 'order__user', 'master_service_item', 
             'master_service_item__master_service'
         )
+
+
+@admin.register(Review)
+class ReviewAdmin(admin.ModelAdmin):
+    """Админка для отзывов"""
+    
+    list_display = ['id', 'order_link', 'reviewer_link', 'rating_stars', 'tag_badge', 'created_at']
+    list_filter = ['rating', 'tag', 'created_at']
+    search_fields = ['order__id', 'reviewer__email', 'reviewer__first_name', 'reviewer__last_name', 'comment']
+    readonly_fields = ['id', 'created_at', 'updated_at']
+    list_per_page = 25
+    
+    fieldsets = (
+        ('Основная информация', {
+            'fields': ('id', 'order', 'reviewer', 'rating', 'tag')
+        }),
+        ('Комментарий', {
+            'fields': ('comment',)
+        }),
+        ('Временные метки', {
+            'fields': ('created_at', 'updated_at'),
+            'classes': ('collapse',)
+        }),
+    )
+    
+    def order_link(self, obj):
+        """Ссылка на заказ"""
+        if obj.order:
+            url = reverse('admin:order_order_change', args=[obj.order.id])
+            return format_html('<a href="{}">Заказ #{}</a>', url, obj.order.id)
+        return '-'
+    order_link.short_description = 'Заказ'
+    
+    def reviewer_link(self, obj):
+        """Ссылка на пользователя"""
+        if obj.reviewer:
+            url = reverse('admin:accounts_customuser_change', args=[obj.reviewer.id])
+            return format_html('<a href="{}">{}</a>', url, obj.reviewer.get_full_name() or obj.reviewer.email)
+        return '-'
+    reviewer_link.short_description = 'Автор отзыва'
+    
+    def rating_stars(self, obj):
+        """Рейтинг звездами"""
+        stars = '⭐' * obj.rating
+        return format_html('<span style="font-size: 16px;">{}</span>', stars)
+    rating_stars.short_description = 'Рейтинг'
+    
+    def tag_badge(self, obj):
+        """Тег с цветовой индикацией"""
+        colors = {
+            'fast_work': '#17a2b8',
+            'no_overpay': '#28a745',
+            'deadline': '#ffc107',
+            'always_available': '#007bff',
+            'individual_approach': '#6f42c1',
+            'polite': '#fd7e14',
+        }
+        color = colors.get(obj.tag, '#6c757d')
+        return format_html(
+            '<span style="background-color: {}; color: white; padding: 3px 8px; '
+            'border-radius: 3px; font-size: 11px;">{}</span>',
+            color, obj.get_tag_display()
+        )
+    tag_badge.short_description = 'Тег'
+    
+    def get_queryset(self, request):
+        """Оптимизация запросов"""
+        return super().get_queryset(request).select_related('order', 'reviewer')
+
+
+@admin.register(UserRating)
+class UserRatingAdmin(admin.ModelAdmin):
+    """Админка для рейтингов пользователей"""
+    
+    list_display = ['id', 'user_link', 'rating_stars', 'average_rating', 'updated_at']
+    list_filter = ['updated_at']
+    search_fields = ['user__email', 'user__first_name', 'user__last_name']
+    readonly_fields = ['id', 'user', 'average_rating', 'updated_at']
+    list_per_page = 25
+    ordering = ['-average_rating']
+    
+    def user_link(self, obj):
+        """Ссылка на пользователя"""
+        if obj.user:
+            url = reverse('admin:accounts_customuser_change', args=[obj.user.id])
+            return format_html('<a href="{}">{}</a>', url, obj.user.get_full_name() or obj.user.email)
+        return '-'
+    user_link.short_description = 'Пользователь'
+    
+    def rating_stars(self, obj):
+        """Рейтинг звездами"""
+        full_stars = int(obj.average_rating)
+        stars = '⭐' * full_stars
+        return format_html('<span style="font-size: 16px;">{} ({})</span>', stars, obj.average_rating)
+    rating_stars.short_description = 'Рейтинг'
+    
+    def get_queryset(self, request):
+        """Оптимизация запросов"""
+        return super().get_queryset(request).select_related('user')
 
 
 # Дополнительные настройки админки

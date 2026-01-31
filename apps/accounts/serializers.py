@@ -261,6 +261,8 @@ class UserDetailsSerializer(serializers.ModelSerializer):
     roles = serializers.SerializerMethodField()
     balance = serializers.SerializerMethodField()
     avatar = serializers.ImageField(use_url=True, read_only=True)
+    reviews = serializers.SerializerMethodField()
+    rating = serializers.SerializerMethodField()
     
     class Meta:
         model = CustomUser
@@ -268,10 +270,12 @@ class UserDetailsSerializer(serializers.ModelSerializer):
             'id', 'private_id', 'username', 'email', 'phone_number', 'first_name', 
             'last_name', 'date_of_birth', 'avatar', 'address', 
             'longitude', 'latitude', 'is_verified', 'roles', 'balance',
+            'reviews', 'rating',
             'created_at', 'updated_at', 'description'
         ]
         read_only_fields = [
             'id', 'private_id', 'email', 'phone_number', 'is_verified', 'roles', 'balance',
+            'reviews', 'rating',
             'created_at', 'updated_at'
         ]
     
@@ -315,6 +319,60 @@ class UserDetailsSerializer(serializers.ModelSerializer):
                 'updated_at': None
             }
         return []
+    
+    def get_reviews(self, obj):
+        """Получение всех отзывов о пользователе (как мастере)"""
+        try:
+            from apps.order.models import Review, Order
+            
+            # Находим все заказы, где user был мастером
+            orders_as_main_master = Order.objects.filter(master__user=obj)
+            orders_as_assigned_master = Order.objects.filter(masters=obj)
+            
+            # Объединяем ID
+            all_order_ids = set(orders_as_main_master.values_list('id', flat=True)) | \
+                           set(orders_as_assigned_master.values_list('id', flat=True))
+            
+            # Получаем отзывы для этих заказов
+            reviews = Review.objects.filter(order_id__in=all_order_ids).order_by('-created_at')
+            
+            return [
+                {
+                    'id': review.id,
+                    'rating': review.rating,
+                    'comment': review.comment,
+                    'tag': review.tag,
+                    'tag_display': review.get_tag_display(),
+                    'reviewer': {
+                        'id': review.reviewer.id,
+                        'full_name': review.reviewer.get_full_name(),
+                        'avatar': review.reviewer.avatar.url if review.reviewer.avatar else None
+                    },
+                    'order_id': review.order.id,
+                    'created_at': review.created_at
+                }
+                for review in reviews
+            ]
+        except Exception as e:
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.error(f"Error getting reviews for user {obj.id}: {str(e)}")
+            return []
+    
+    def get_rating(self, obj):
+        """Получение среднего рейтинга пользователя"""
+        try:
+            from apps.order.models import UserRating
+            
+            user_rating = UserRating.objects.filter(user=obj).first()
+            if user_rating:
+                return float(user_rating.average_rating)
+            return 0.0
+        except Exception as e:
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.error(f"Error getting rating for user {obj.id}: {str(e)}")
+            return 0.0
 
 
 class UserUpdateSerializer(serializers.ModelSerializer):
