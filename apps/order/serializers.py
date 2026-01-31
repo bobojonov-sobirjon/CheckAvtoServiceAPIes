@@ -284,8 +284,11 @@ class OrderCreateSerializer(serializers.ModelSerializer):
         
         # Валидация для SOS заказов
         elif order_type == OrderType.SOS:
-            # Для SOS автоматически устанавливаем высокий приоритет
-            attrs['priority'] = OrderPriority.HIGH
+            # Проверяем, что priority указан
+            if not attrs.get('priority'):
+                raise serializers.ValidationError({
+                    'priority': 'Для SOS заказа необходимо указать приоритет (low или high)'
+                })
             
             # SOS не должен иметь scheduled полей
             attrs['scheduled_date'] = None

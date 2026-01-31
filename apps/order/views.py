@@ -239,6 +239,7 @@ class SOSOrderCreateView(APIView):
 ### Основные:
 - **order_type**: всегда "sos"
 - **text**: описание проблемы (например: "Пробито колесо, не могу ехать дальше")
+- **priority**: приоритет заказа - "low" (низкий) или "high" (высокий)
 - **car_list**: список ID машин клиента [1, 2]
 - **category_list**: список ID категорий проблем [1, 2]
 
@@ -252,17 +253,18 @@ class SOSOrderCreateView(APIView):
 
 ## ⚠️ Автоматическая обработка:
 
-1. **Приоритет автоматически HIGH** - система установит высокий приоритет
+1. **Приоритет устанавливается клиентом** - клиент выбирает "Низкий" или "Высокий" приоритет
 2. **Поиск ближайших мастеров** - система найдет мастеров в радиусе 50 км
 3. **Уведомления мастерам** - все подходящие мастера получат push-уведомление
 4. **Первый принявший получает заказ** - мастер, который быстрее примет, получит заказ
 
 ## 📝 Примеры использования:
 
-### Пример 1: Пробито колесо на трассе
+### Пример 1: Пробито колесо на трассе (высокий приоритет)
 ```json
 {
   "order_type": "sos",
+  "priority": "high",
   "text": "Пробито переднее правое колесо на трассе. Нужна срочная замена.",
   "location": "Трасса M39, км 45, около заправки Shell",
   "latitude": 41.2548,
@@ -272,10 +274,11 @@ class SOSOrderCreateView(APIView):
 }
 ```
 
-### Пример 2: Не заводится машина
+### Пример 2: Не заводится машина (низкий приоритет)
 ```json
 {
   "order_type": "sos",
+  "priority": "low",
   "text": "Машина не заводится, аккумулятор сел. Нужна помощь с прикуриванием.",
   "location": "Торговый центр Mega Planet, подземная парковка -1 этаж",
   "latitude": 41.3250,
@@ -285,10 +288,11 @@ class SOSOrderCreateView(APIView):
 }
 ```
 
-### Пример 3: С указанием конкретного мастера
+### Пример 3: С указанием конкретного мастера (высокий приоритет)
 ```json
 {
   "order_type": "sos",
+  "priority": "high",
   "master_id": 7,
   "text": "Перегрев двигателя, едет пар из-под капота",
   "location": "ул. Мирабад, возле дома 12",
@@ -313,9 +317,10 @@ class SOSOrderCreateView(APIView):
         request={
             'application/json': {
                 'type': 'object',
-                'required': ['order_type', 'text', 'location', 'latitude', 'longitude', 'car_list', 'category_list'],
+                'required': ['order_type', 'priority', 'text', 'location', 'latitude', 'longitude', 'car_list', 'category_list'],
                 'properties': {
                     'order_type': {'type': 'string', 'enum': ['sos'], 'description': 'Тип заказа (всегда "sos")', 'example': 'sos'},
+                    'priority': {'type': 'string', 'enum': ['low', 'high'], 'description': 'Приоритет заказа: low (низкий) или high (высокий)', 'example': 'high'},
                     'text': {'type': 'string', 'description': 'Описание проблемы', 'example': 'Пробито переднее правое колесо на трассе'},
                     'location': {'type': 'string', 'description': 'Описание текущего места', 'example': 'Трасса M39, км 45, около заправки Shell'},
                     'latitude': {'type': 'number', 'description': 'Текущая широта (GPS)', 'example': 41.2548},
