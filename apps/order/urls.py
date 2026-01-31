@@ -8,6 +8,9 @@ urlpatterns = [
     path('scheduled/', views.ScheduledOrderCreateView.as_view(), name='scheduled-order-create'),
     path('sos/', views.SOSOrderCreateView.as_view(), name='sos-order-create'),
     
+    # Available time slots
+    path('available-slots/', views.AvailableTimeSlotsView.as_view(), name='available-time-slots'),
+    
     # Order CRUD operations
     path('', views.OrderListCreateView.as_view(), name='order-list-create'),
     path('<int:id>/', views.OrderDetailView.as_view(), name='order-detail'),

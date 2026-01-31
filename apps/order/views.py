@@ -385,6 +385,271 @@ class SOSOrderCreateView(APIView):
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
 
+class AvailableTimeSlotsView(APIView):
+    """Получение доступных временных слотов для мастера на конкретную дату"""
+    permission_classes = [IsAuthenticated]
+    
+    @extend_schema(
+        summary="Получить доступные временные слоты для записи",
+        description="""
+# 🕐 Доступные временные слоты
+
+Этот endpoint возвращает список временных слотов (каждые 2 часа) для записи к мастеру на конкретную дату.
+
+## 🎯 Когда использовать?
+
+✅ Клиент выбирает **дату визита** в календаре
+✅ Нужно показать **доступные** и **занятые** временные слоты
+✅ Клиент записывается на **конкретное время** (например: 11:00-13:00)
+
+## 📋 Обязательные параметры:
+
+- **master_id** (query) - ID мастера/мастерской
+- **date** (query) - Дата в формате YYYY-MM-DD (например: 2026-01-30)
+
+## 📊 Формат ответа:
+
+Каждый временной слот - это отдельный объект со следующими полями:
+- **start** - время начала слота (HH:MM)
+- **end** - время окончания слота (HH:MM)
+- **available** - доступен ли слот (true/false)
+- **order_id** - ID заказа (если слот занят)
+
+## ⏰ Логика работы:
+
+1. Берется **рабочее время мастера** (например: 09:00-18:00)
+2. Делится на слоты **по 2 часа**: 09:00-11:00, 11:00-13:00, 13:00-15:00, 15:00-17:00, 17:00-19:00
+3. Проверяются **существующие заказы** на эту дату
+4. Возвращается список слотов с пометкой **available/unavailable**
+
+## 📝 Пример ответа:
+
+```json
+{
+  "date": "2026-01-30",
+  "master_id": 5,
+  "master_name": "СТО Автосервис",
+  "working_hours": "09:00-18:00",
+  "slots": [
+    {
+      "start": "09:00",
+      "end": "11:00",
+      "available": true
+    },
+    {
+      "start": "11:00",
+      "end": "13:00",
+      "available": false,
+      "order_id": 123
+    },
+    {
+      "start": "13:00",
+      "end": "15:00",
+      "available": true
+    },
+    {
+      "start": "15:00",
+      "end": "17:00",
+      "available": true
+    },
+    {
+      "start": "17:00",
+      "end": "19:00",
+      "available": false,
+      "order_id": 456
+    }
+  ]
+}
+```
+        """,
+        tags=['Orders'],
+        parameters=[
+            OpenApiParameter(
+                name='master_id',
+                type=OpenApiTypes.INT,
+                location=OpenApiParameter.QUERY,
+                description='ID мастера (обязательно)',
+                required=True,
+                example=5
+            ),
+            OpenApiParameter(
+                name='date',
+                type=OpenApiTypes.DATE,
+                location=OpenApiParameter.QUERY,
+                description='Дата для проверки слотов (формат: YYYY-MM-DD)',
+                required=True,
+                example='2026-01-30'
+            ),
+        ],
+        responses={
+            200: {
+                'description': 'Список доступных временных слотов',
+                'content': {
+                    'application/json': {
+                        'example': {
+                            'date': '2026-01-30',
+                            'master_id': 5,
+                            'master_name': 'СТО Автосервис',
+                            'working_hours': '09:00-18:00',
+                            'slots': [
+                                {
+                                    'start': '09:00',
+                                    'end': '11:00',
+                                    'available': True
+                                },
+                                {
+                                    'start': '11:00',
+                                    'end': '13:00',
+                                    'available': False,
+                                    'order_id': 123
+                                },
+                                {
+                                    'start': '13:00',
+                                    'end': '15:00',
+                                    'available': True
+                                }
+                            ]
+                        }
+                    }
+                }
+            },
+            400: {
+                'description': 'Ошибка валидации',
+                'content': {
+                    'application/json': {
+                        'examples': {
+                            'missing_params': {
+                                'summary': 'Отсутствуют параметры',
+                                'value': {'error': 'master_id и date обязательны'}
+                            },
+                            'invalid_date': {
+                                'summary': 'Неверный формат даты',
+                                'value': {'error': 'Неверный формат даты. Используйте YYYY-MM-DD'}
+                            }
+                        }
+                    }
+                }
+            },
+            404: {
+                'description': 'Мастер не найден',
+                'content': {
+                    'application/json': {
+                        'example': {'error': 'Мастер не найден'}
+                    }
+                }
+            }
+        }
+    )
+    def get(self, request):
+        """Получить доступные временные слоты"""
+        from datetime import datetime, timedelta, time
+        
+        # Получаем параметры
+        master_id = request.query_params.get('master_id')
+        date_str = request.query_params.get('date')
+        
+        # Валидация параметров
+        if not master_id or not date_str:
+            return Response(
+                {'error': 'master_id и date обязательны'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # Валидация даты
+        try:
+            check_date = datetime.strptime(date_str, '%Y-%m-%d').date()
+        except ValueError:
+            return Response(
+                {'error': 'Неверный формат даты. Используйте YYYY-MM-DD (например: 2026-01-30)'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # Получаем мастера
+        try:
+            master = Master.objects.get(id=master_id)
+        except Master.DoesNotExist:
+            return Response(
+                {'error': 'Мастер не найден'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+        
+        # Парсим рабочее время мастера (например: "09:00-18:00")
+        working_time = master.working_time or "09:00-18:00"
+        
+        try:
+            start_time_str, end_time_str = working_time.split('-')
+            start_hour, start_minute = map(int, start_time_str.strip().split(':'))
+            end_hour, end_minute = map(int, end_time_str.strip().split(':'))
+        except:
+            # Если не удалось распарсить, используем дефолтные значения
+            start_hour, start_minute = 9, 0
+            end_hour, end_minute = 18, 0
+        
+        # Генерируем временные слоты (каждые 2 часа)
+        slots = []
+        current_hour = start_hour
+        current_minute = start_minute
+        
+        while current_hour < end_hour:
+            slot_start = time(current_hour, current_minute)
+            
+            # Добавляем 2 часа
+            next_hour = current_hour + 2
+            next_minute = current_minute
+            
+            # Проверяем, не выходим ли за рабочее время
+            if next_hour > end_hour or (next_hour == end_hour and next_minute > end_minute):
+                break
+            
+            slot_end = time(next_hour, next_minute)
+            
+            slots.append({
+                'start': slot_start.strftime('%H:%M'),
+                'end': slot_end.strftime('%H:%M'),
+            })
+            
+            current_hour = next_hour
+            current_minute = next_minute
+        
+        # Получаем существующие заказы на эту дату для этого мастера
+        existing_orders = Order.objects.filter(
+            master=master,
+            order_type=OrderType.SCHEDULED,
+            scheduled_date=check_date,
+            status__in=[OrderStatus.PENDING, OrderStatus.IN_PROGRESS]
+        ).select_related('user')
+        
+        # Проверяем доступность каждого слота
+        for slot in slots:
+            slot['available'] = True
+            
+            for order in existing_orders:
+                if not order.scheduled_time_start or not order.scheduled_time_end:
+                    continue
+                
+                order_start = order.scheduled_time_start.strftime('%H:%M')
+                order_end = order.scheduled_time_end.strftime('%H:%M')
+                
+                # Проверяем пересечение временных интервалов
+                slot_start_time = datetime.strptime(slot['start'], '%H:%M').time()
+                slot_end_time = datetime.strptime(slot['end'], '%H:%M').time()
+                
+                # Если заказ пересекается со слотом
+                if (order.scheduled_time_start < slot_end_time and 
+                    order.scheduled_time_end > slot_start_time):
+                    slot['available'] = False
+                    slot['order_id'] = order.id
+                    break
+        
+        return Response({
+            'date': date_str,
+            'master_id': master.id,
+            'master_name': master.name or master.user.get_full_name(),
+            'working_hours': working_time,
+            'slots': slots
+        })
+
+
 class OrderListCreateView(APIView):
     """Список заказов"""
     permission_classes = [IsAuthenticated]
