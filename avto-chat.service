@@ -1,0 +1,28 @@
+[Unit]
+Description=CheckAvto Daphne WebSocket Service
+Requires=avto-chat.socket
+After=network.target
+
+[Service]
+Type=notify
+# IMPORTANT: Change these paths to match your setup
+User=your_user
+Group=www-data
+WorkingDirectory=/path/to/CheckAvto
+Environment="PATH=/path/to/venv/bin"
+
+# Daphne command
+ExecStart=/path/to/venv/bin/daphne \
+    -u /run/avto-chat.sock \
+    config.asgi:application
+
+# Restart policy
+Restart=on-failure
+RestartSec=5s
+
+# Security settings
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

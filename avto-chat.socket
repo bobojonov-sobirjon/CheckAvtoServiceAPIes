@@ -1,0 +1,11 @@
+[Unit]
+Description=CheckAvto Daphne WebSocket socket
+
+[Socket]
+ListenStream=/run/avto-chat.sock
+# Optionally restrict socket permissions
+SocketUser=www-data
+SocketMode=0660
+
+[Install]
+WantedBy=sockets.target
