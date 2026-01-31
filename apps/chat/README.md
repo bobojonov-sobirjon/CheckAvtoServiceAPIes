@@ -28,12 +28,19 @@ Django Channels bilan real-time chat sistema - text, image, file, audio qo'llab-
 
 ### WebSocket
 
-**URL:** `ws://localhost:8000/ws/chat/{room_id}/`
+**URL:** `ws://localhost:8000/ws/chat/{room_id}/?token={YOUR_JWT_TOKEN}`
 
 **Connection:**
 ```javascript
-const socket = new WebSocket('ws://localhost:8000/ws/chat/1/');
+const token = "your_jwt_access_token_here";
+const roomId = 1;
+const socket = new WebSocket(`ws://localhost:8000/ws/chat/${roomId}/?token=${token}`);
 ```
+
+**Authentication:**
+- WebSocket token orqali authenticate qiladi
+- Token query parameter sifatida yuboriladi: `?token=YOUR_JWT_TOKEN`
+- Token noto'g'ri yoki yo'q bo'lsa, connection yopiladi
 
 ## 🔄 REST API Usage
 
@@ -125,16 +132,40 @@ file: <file>
 
 ```javascript
 const roomId = 1;
-const token = 'YOUR_JWT_TOKEN';
-const socket = new WebSocket(`ws://localhost:8000/ws/chat/${roomId}/`);
+const token = 'YOUR_JWT_ACCESS_TOKEN';
+const socket = new WebSocket(`ws://localhost:8000/ws/chat/${roomId}/?token=${token}`);
 
 socket.onopen = () => {
-  console.log('Connected to chat');
+  console.log('✅ Connected to chat');
 };
 
 socket.onmessage = (event) => {
   const data = JSON.parse(event.data);
-  console.log('Received:', data);
+  console.log('📩 Received:', data);
+  
+  // Handle different message types
+  switch(data.type) {
+    case 'connection_established':
+      console.log('🔌 Connection confirmed');
+      break;
+    case 'chat_message':
+      console.log('💬 New message:', data.message);
+      break;
+    case 'typing_indicator':
+      console.log('✏️ User is typing...');
+      break;
+    case 'read_receipt':
+      console.log('✔️ Message read');
+      break;
+  }
+};
+
+socket.onerror = (error) => {
+  console.error('❌ WebSocket error:', error);
+};
+
+socket.onclose = (event) => {
+  console.log('🔌 Connection closed:', event.code, event.reason);
 };
 ```
 
@@ -287,7 +318,41 @@ curl -X POST "http://localhost:8000/api/chat/rooms/1/messages/" \
 
 ## 🔐 Authentication
 
-WebSocket'lar uchun authentication Django session yoki JWT token ishlatiladi.
+### WebSocket Authentication
+
+WebSocket'lar uchun JWT token query parameter orqali yuboriladi:
+
+**Format:**
+```
+ws://localhost:8000/ws/chat/{room_id}/?token={YOUR_JWT_ACCESS_TOKEN}
+```
+
+**Qanday ishlaydi:**
+1. ✅ Client WebSocket connection ochganda `?token=...` yuboradi
+2. ✅ Server token'ni validate qiladi (JWT)
+3. ✅ Token to'g'ri bo'lsa - connection accept qilinadi
+4. ❌ Token noto'g'ri yoki yo'q bo'lsa - connection yopiladi
+
+**Token olish:**
+```bash
+POST /api/accounts/login/
+Content-Type: application/json
+
+{
+  "phone_number": "+998901234567",
+  "password": "yourpassword"
+}
+```
+
+**Response:**
+```json
+{
+  "access": "eyJ0eXAiOiJKV1QiLCJhbGc...",
+  "refresh": "eyJ0eXAiOiJKV1QiLCJhbGc..."
+}
+```
+
+Ushbu `access` token'ni WebSocket URL'da ishlatish kerak.
 
 ## 🎯 Mobile App Integration
 
@@ -295,17 +360,44 @@ WebSocket'lar uchun authentication Django session yoki JWT token ishlatiladi.
 
 ```javascript
 import { WebSocket } from 'react-native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+
+// Get JWT token from storage
+const token = await AsyncStorage.getItem('access_token');
+const roomId = 1;
 
 const chatSocket = new WebSocket(
-  `ws://your-server.com/ws/chat/${roomId}/`
+  `ws://31.128.43.149:6060/ws/chat/${roomId}/?token=${token}`
 );
+
+chatSocket.onopen = () => {
+  console.log('✅ Connected to chat');
+};
 
 chatSocket.onmessage = (e) => {
   const data = JSON.parse(e.data);
+  
+  if (data.type === 'connection_established') {
+    console.log('🔌 Connection confirmed');
+  }
+  
   if (data.type === 'chat_message') {
     // Add message to UI
     addMessageToChat(data.message);
   }
+  
+  if (data.type === 'typing') {
+    // Show typing indicator
+    setIsTyping(data.is_typing);
+  }
+};
+
+chatSocket.onerror = (error) => {
+  console.error('❌ WebSocket error:', error);
+};
+
+chatSocket.onclose = () => {
+  console.log('🔌 Connection closed');
 };
 
 // Send message
@@ -316,7 +408,59 @@ const sendMessage = (text) => {
     text: text
   }));
 };
+
+// Send typing indicator
+const sendTyping = (isTyping) => {
+  chatSocket.send(JSON.stringify({
+    type: 'typing',
+    is_typing: isTyping
+  }));
+};
 ```
+
+### Flutter Example
+
+```dart
+import 'package:web_socket_channel/web_socket_channel.dart';
+
+final token = await storage.read(key: 'access_token');
+final roomId = 1;
+
+final channel = WebSocketChannel.connect(
+  Uri.parse('ws://31.128.43.149:6060/ws/chat/$roomId/?token=$token'),
+);
+
+// Listen to messages
+channel.stream.listen((message) {
+  final data = jsonDecode(message);
+  
+  if (data['type'] == 'chat_message') {
+    // Handle new message
+    print('New message: ${data['message']['text']}');
+  }
+});
+
+// Send message
+void sendMessage(String text) {
+  channel.sink.add(jsonEncode({
+    'type': 'chat_message',
+    'message_type': 'text',
+    'text': text,
+  }));
+}
+```
+
+## 🌐 Server URLs
+
+### Development
+- **REST API:** `http://localhost:8000/api/chat/`
+- **WebSocket:** `ws://localhost:8000/ws/chat/{room_id}/?token={token}`
+- **Swagger:** `http://localhost:8000/api/schema/swagger-ui/`
+
+### Production
+- **REST API:** `http://31.128.43.149:6060/api/chat/`
+- **WebSocket:** `ws://31.128.43.149:6060/ws/chat/{room_id}/?token={token}`
+- **Swagger:** `http://31.128.43.149:6060/api/schema/swagger-ui/`
 
 ## 📚 Swagger Documentation
 
@@ -324,6 +468,14 @@ Swagger'da "Chat" tag'ida barcha REST API'lar dokumentatsiya bilan mavjud:
 ```
 http://localhost:8000/api/schema/swagger-ui/
 ```
+
+**Chat endpoints:**
+- `GET /api/chat/rooms/` - Chat roomlar ro'yxati
+- `POST /api/chat/rooms/` - Yangi chat yaratish
+- `GET /api/chat/rooms/{id}/` - Chat detali
+- `GET /api/chat/rooms/{id}/messages/` - Messagelar ro'yxati
+- `POST /api/chat/rooms/{id}/messages/` - Message yuborish
+- `POST /api/chat/rooms/{id}/mark-read/` - O'qilgan belgilash
 
 ## 🚀 Running
 
