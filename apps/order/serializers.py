@@ -136,9 +136,9 @@ class OrderCreateSerializer(serializers.ModelSerializer):
     - scheduled_time_start: время начала
     - scheduled_time_end: время окончания
     
-    Для SOS заказа:
-    - priority автоматически устанавливается в 'high'
-    - master_id необязателен (система найдет ближайших мастеров)
+    Для SOS заказа дополнительно обязательно:
+    - master_id: ID мастера
+    - priority: приоритет заказа ('low' или 'high')
     """
     order_type = serializers.ChoiceField(
         choices=OrderType.choices,
@@ -149,7 +149,7 @@ class OrderCreateSerializer(serializers.ModelSerializer):
         required=False,
         allow_null=True,
         write_only=True,
-        help_text="ID мастера (обязательно для scheduled, необязательно для sos)"
+        help_text="ID мастера (обязательно для scheduled и sos)"
     )
     car_list = serializers.ListField(
         child=serializers.IntegerField(),
@@ -296,17 +296,22 @@ class OrderCreateSerializer(serializers.ModelSerializer):
         
         # Валидация для SOS заказов
         elif order_type == OrderType.SOS:
+            # Для SOS обязательны: master_id и priority
+            if not master_id:
+                raise serializers.ValidationError({
+                    'master_id': 'Для SOS заказа необходимо указать мастера'
+                })
+            
             # Проверяем, что priority указан
             if not attrs.get('priority'):
                 raise serializers.ValidationError({
                     'priority': 'Для SOS заказа необходимо указать приоритет (low или high)'
                 })
             
-            # SOS не должен иметь scheduled полей и master_id
+            # SOS не должен иметь scheduled полей
             attrs['scheduled_date'] = None
             attrs['scheduled_time_start'] = None
             attrs['scheduled_time_end'] = None
-            attrs['master_id'] = None  # SOS заказы не имеют конкретного мастера
         
         # Проверка расстояния между заказом и мастером (если указан master_id)
         if master_id and order_lat and order_lon:
