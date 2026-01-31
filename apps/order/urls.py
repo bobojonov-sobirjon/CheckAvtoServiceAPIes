@@ -4,6 +4,10 @@ from . import views
 app_name = 'order'
 
 urlpatterns = [
+    # Order creation (NEW: separate endpoints for different order types)
+    path('scheduled/', views.ScheduledOrderCreateView.as_view(), name='scheduled-order-create'),
+    path('sos/', views.SOSOrderCreateView.as_view(), name='sos-order-create'),
+    
     # Order CRUD operations
     path('', views.OrderListCreateView.as_view(), name='order-list-create'),
     path('<int:id>/', views.OrderDetailView.as_view(), name='order-detail'),

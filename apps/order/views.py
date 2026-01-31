@@ -8,10 +8,10 @@ from django_filters.rest_framework import DjangoFilterBackend
 from django.db.models import Q
 from django.contrib.auth import get_user_model
 
-from drf_spectacular.utils import extend_schema, OpenApiParameter
+from drf_spectacular.utils import extend_schema, OpenApiParameter, OpenApiExample
 from drf_spectacular.types import OpenApiTypes
 
-from .models import Order, OrderStatus, Rating
+from .models import Order, OrderStatus, OrderType, Rating
 from .serializers import OrderSerializer, OrderCreateSerializer, OrderUpdateSerializer, RatingSerializer
 from .permissions import IsOrderOwnerOrMaster, IsOrderOwner, IsMaster
 from apps.master.models import Master
@@ -28,8 +28,360 @@ class OrderPagination(PageNumberPagination):
     max_page_size = 100
 
 
+class ScheduledOrderCreateView(APIView):
+    """Создание запланированного заказа (Order by Date)"""
+    permission_classes = [IsAuthenticated]
+    
+    @extend_schema(
+        summary="📅 Создать запланированный заказ (Order by Date)",
+        description="""
+# 📅 Запланированный заказ (Order by Date)
+
+Этот endpoint используется для создания **запланированного заказа**, когда клиент:
+- Заранее выбирает мастера/мастерскую
+- Выбирает конкретную дату визита
+- Выбирает временной слот (например: 10:00-11:00)
+- Указывает услуги, которые нужны
+
+## 🎯 Когда использовать этот endpoint?
+
+✅ Клиент планирует **плановое ТО** (замена масла, шиномонтаж, диагностика)
+✅ Клиент хочет **записаться на конкретное время**
+✅ Клиент **выбрал мастерскую** из списка
+
+❌ НЕ используйте для **экстренных случаев** (используйте `/api/order/sos/`)
+
+## 📋 Обязательные поля:
+
+### Основные:
+- **order_type**: всегда "scheduled"
+- **text**: описание услуги (например: "Замена масла и фильтров")
+- **car_list**: список ID машин клиента [1, 2]
+- **category_list**: список ID категорий услуг [1, 2]
+
+### Выбор мастера:
+- **master_id**: ID выбранной мастерской/мастера
+
+### Дата и время:
+- **scheduled_date**: дата визита (формат: YYYY-MM-DD, например: 2026-01-30)
+- **scheduled_time_start**: время начала (формат: HH:MM, например: 14:00)
+- **scheduled_time_end**: время окончания (формат: HH:MM, например: 15:00)
+
+### Местоположение:
+- **location**: адрес мастерской (строка)
+- **latitude**: широта мастерской (от -90 до 90)
+- **longitude**: долгота мастерской (от -180 до 180)
+
+## ⚠️ Важные проверки:
+
+1. **Дата не может быть в прошлом** - система проверит, что дата визита >= сегодня
+2. **Время начала < времени окончания** - система проверит логику времени
+3. **Расстояние до мастера <= 50 км** - система проверит, что клиент не слишком далеко от мастера
+4. **Временной слот должен быть свободен** - мастер не должен быть занят в это время
+
+## 📝 Примеры использования:
+
+### Пример 1: Замена масла
+```json
+{
+  "order_type": "scheduled",
+  "master_id": 5,
+  "scheduled_date": "2026-01-30",
+  "scheduled_time_start": "14:00",
+  "scheduled_time_end": "15:00",
+  "text": "Замена масла и масляного фильтра",
+  "location": "СТО 'Автосервис', ул. Навои, д. 15",
+  "latitude": 41.3111,
+  "longitude": 69.2797,
+  "car_list": [2],
+  "category_list": [1]
+}
+```
+
+### Пример 2: Шиномонтаж
+```json
+{
+  "order_type": "scheduled",
+  "master_id": 8,
+  "scheduled_date": "2026-02-01",
+  "scheduled_time_start": "10:00",
+  "scheduled_time_end": "11:00",
+  "text": "Замена резины на летнюю",
+  "location": "Шиномонтаж 'Колесо', пр. Амира Темура, 45",
+  "latitude": 41.3150,
+  "longitude": 69.2800,
+  "car_list": [3],
+  "category_list": [2, 5]
+}
+```
+
+## 🎯 Workflow:
+
+1. Клиент выбирает мастера в приложении
+2. Клиент выбирает дату (календарь)
+3. Клиент выбирает свободный временной слот
+4. Клиент заполняет описание и отправляет заказ
+5. ✅ Мастер получает уведомление о новом заказе
+6. Мастер подтверждает или отклоняет заказ
+        """,
+        tags=['📅 Orders: Scheduled (Order by Date)'],
+        request={
+            'application/json': {
+                'type': 'object',
+                'required': ['order_type', 'master_id', 'scheduled_date', 'scheduled_time_start', 'scheduled_time_end', 'text', 'location', 'latitude', 'longitude', 'car_list', 'category_list'],
+                'properties': {
+                    'order_type': {'type': 'string', 'enum': ['scheduled'], 'description': 'Тип заказа (всегда "scheduled")', 'example': 'scheduled'},
+                    'master_id': {'type': 'integer', 'description': 'ID мастера/мастерской (обязательно)', 'example': 5},
+                    'scheduled_date': {'type': 'string', 'format': 'date', 'description': 'Дата визита (YYYY-MM-DD)', 'example': '2026-01-30'},
+                    'scheduled_time_start': {'type': 'string', 'format': 'time', 'description': 'Время начала (HH:MM)', 'example': '14:00'},
+                    'scheduled_time_end': {'type': 'string', 'format': 'time', 'description': 'Время окончания (HH:MM)', 'example': '15:00'},
+                    'text': {'type': 'string', 'description': 'Описание услуги', 'example': 'Замена масла и масляного фильтра'},
+                    'location': {'type': 'string', 'description': 'Адрес мастерской', 'example': 'СТО Автосервис, ул. Навои, д. 15'},
+                    'latitude': {'type': 'number', 'description': 'Широта мастерской', 'example': 41.3111},
+                    'longitude': {'type': 'number', 'description': 'Долгота мастерской', 'example': 69.2797},
+                    'car_list': {'type': 'array', 'items': {'type': 'integer'}, 'description': 'Список ID машин', 'example': [2]},
+                    'category_list': {'type': 'array', 'items': {'type': 'integer'}, 'description': 'Список ID категорий услуг', 'example': [1]}
+                }
+            }
+        },
+        responses={
+            201: {
+                'description': 'Заказ успешно создан',
+                'content': {
+                    'application/json': {
+                        'example': {
+                            'message': 'Ваш заказ успешно создан и отправлен мастеру',
+                            'order': {
+                                'id': 123,
+                                'order_type': 'scheduled',
+                                'status': 'pending',
+                                'scheduled_date': '2026-01-30',
+                                'scheduled_time_start': '14:00',
+                                'scheduled_time_end': '15:00',
+                                'master': {'id': 5, 'name': 'СТО Автосервис'},
+                                'text': 'Замена масла и масляного фильтра'
+                            }
+                        }
+                    }
+                }
+            },
+            400: {
+                'description': 'Ошибка валидации',
+                'content': {
+                    'application/json': {
+                        'examples': {
+                            'missing_master': {
+                                'summary': 'Не указан мастер',
+                                'value': {'master_id': ['Для запланированного заказа необходимо указать мастера']}
+                            },
+                            'missing_date': {
+                                'summary': 'Не указана дата',
+                                'value': {'scheduled_date': ['Для запланированного заказа необходимо указать дату визита']}
+                            },
+                            'past_date': {
+                                'summary': 'Дата в прошлом',
+                                'value': {'scheduled_date': ['Дата визита не может быть в прошлом']}
+                            },
+                            'distance_error': {
+                                'summary': 'Мастер слишком далеко',
+                                'value': {'master_id': ['Выбранный мастер находится слишком далеко (150.5 км). Максимальное расстояние: 50 км.']}
+                            }
+                        }
+                    }
+                }
+            },
+            401: {'description': 'Не авторизован'}
+        }
+    )
+    def post(self, request):
+        """Создать запланированный заказ"""
+        # Принудительно устанавливаем order_type
+        data = request.data.copy()
+        data['order_type'] = OrderType.SCHEDULED
+        
+        serializer = OrderCreateSerializer(data=data)
+        if serializer.is_valid():
+            order = serializer.save(user=request.user)
+            order_serializer = OrderSerializer(order)
+            return Response({
+                'message': 'Ваш заказ успешно создан и отправлен мастеру',
+                'order': order_serializer.data
+            }, status=status.HTTP_201_CREATED)
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+
+class SOSOrderCreateView(APIView):
+    """Создание SOS заказа (экстренная помощь)"""
+    permission_classes = [IsAuthenticated]
+    
+    @extend_schema(
+        summary="🚨 Создать SOS заказ (экстренная помощь)",
+        description="""
+# 🚨 SOS заказ (Экстренная помощь)
+
+Этот endpoint используется для создания **экстренного заказа**, когда клиент:
+- Находится в **аварийной ситуации** (машина сломалась, колесо пробито и т.д.)
+- Нужна **немедленная помощь**
+- Отправляет свою **текущую GPS-локацию**
+- Система автоматически находит **ближайших свободных мастеров** в радиусе
+
+## 🎯 Когда использовать этот endpoint?
+
+✅ Машина **сломалась на дороге**
+✅ **Пробито колесо** посреди трассы
+✅ **Не заводится двигатель** на парковке
+✅ Любая **экстренная ситуация**, требующая немедленной помощи
+
+❌ НЕ используйте для **плановых работ** (используйте `/api/order/scheduled/`)
+
+## 📋 Обязательные поля:
+
+### Основные:
+- **order_type**: всегда "sos"
+- **text**: описание проблемы (например: "Пробито колесо, не могу ехать дальше")
+- **car_list**: список ID машин клиента [1, 2]
+- **category_list**: список ID категорий проблем [1, 2]
+
+### Текущее местоположение (GPS):
+- **location**: описание текущего места (например: "Трасса М39, около заправки Shell")
+- **latitude**: текущая широта клиента (от -90 до 90)
+- **longitude**: текущая долгота клиента (от -180 до 180)
+
+### Необязательные:
+- **master_id**: можно не указывать (система сама найдет ближайших мастеров)
+
+## ⚠️ Автоматическая обработка:
+
+1. **Приоритет автоматически HIGH** - система установит высокий приоритет
+2. **Поиск ближайших мастеров** - система найдет мастеров в радиусе 50 км
+3. **Уведомления мастерам** - все подходящие мастера получат push-уведомление
+4. **Первый принявший получает заказ** - мастер, который быстрее примет, получит заказ
+
+## 📝 Примеры использования:
+
+### Пример 1: Пробито колесо на трассе
+```json
+{
+  "order_type": "sos",
+  "text": "Пробито переднее правое колесо на трассе. Нужна срочная замена.",
+  "location": "Трасса M39, км 45, около заправки Shell",
+  "latitude": 41.2548,
+  "longitude": 69.2107,
+  "car_list": [2],
+  "category_list": [1]
+}
+```
+
+### Пример 2: Не заводится машина
+```json
+{
+  "order_type": "sos",
+  "text": "Машина не заводится, аккумулятор сел. Нужна помощь с прикуриванием.",
+  "location": "Торговый центр Mega Planet, подземная парковка -1 этаж",
+  "latitude": 41.3250,
+  "longitude": 69.2890,
+  "car_list": [3],
+  "category_list": [4]
+}
+```
+
+### Пример 3: С указанием конкретного мастера
+```json
+{
+  "order_type": "sos",
+  "master_id": 7,
+  "text": "Перегрев двигателя, едет пар из-под капота",
+  "location": "ул. Мирабад, возле дома 12",
+  "latitude": 41.3100,
+  "longitude": 69.2750,
+  "car_list": [1],
+  "category_list": [6]
+}
+```
+
+## 🎯 Workflow:
+
+1. Клиент нажимает кнопку "SOS" в приложении
+2. Приложение автоматически получает GPS-координаты
+3. Клиент описывает проблему
+4. Система отправляет заказ всем ближайшим мастерам (радиус 50 км)
+5. ✅ Мастера видят заказ с картой и могут принять его
+6. Первый принявший мастер получает заказ
+7. Клиент видит информацию о мастере и может с ним связаться
+        """,
+        tags=['🚨 Orders: SOS (Emergency)'],
+        request={
+            'application/json': {
+                'type': 'object',
+                'required': ['order_type', 'text', 'location', 'latitude', 'longitude', 'car_list', 'category_list'],
+                'properties': {
+                    'order_type': {'type': 'string', 'enum': ['sos'], 'description': 'Тип заказа (всегда "sos")', 'example': 'sos'},
+                    'text': {'type': 'string', 'description': 'Описание проблемы', 'example': 'Пробито переднее правое колесо на трассе'},
+                    'location': {'type': 'string', 'description': 'Описание текущего места', 'example': 'Трасса M39, км 45, около заправки Shell'},
+                    'latitude': {'type': 'number', 'description': 'Текущая широта (GPS)', 'example': 41.2548},
+                    'longitude': {'type': 'number', 'description': 'Текущая долгота (GPS)', 'example': 69.2107},
+                    'car_list': {'type': 'array', 'items': {'type': 'integer'}, 'description': 'Список ID машин', 'example': [2]},
+                    'category_list': {'type': 'array', 'items': {'type': 'integer'}, 'description': 'Список ID категорий проблем', 'example': [1]},
+                    'master_id': {'type': 'integer', 'description': 'ID конкретного мастера (необязательно)', 'example': 7}
+                }
+            }
+        },
+        responses={
+            201: {
+                'description': 'SOS заказ успешно создан',
+                'content': {
+                    'application/json': {
+                        'example': {
+                            'message': 'Ваш экстренный заказ отправлен! Ближайшие мастера уже получили уведомление.',
+                            'order': {
+                                'id': 456,
+                                'order_type': 'sos',
+                                'status': 'pending',
+                                'priority': 'high',
+                                'location': 'Трасса M39, км 45',
+                                'latitude': 41.2548,
+                                'longitude': 69.2107,
+                                'text': 'Пробито переднее правое колесо'
+                            }
+                        }
+                    }
+                }
+            },
+            400: {
+                'description': 'Ошибка валидации',
+                'content': {
+                    'application/json': {
+                        'examples': {
+                            'missing_location': {
+                                'summary': 'Не указано местоположение',
+                                'value': {'latitude': ['Это поле обязательно'], 'longitude': ['Это поле обязательно']}
+                            }
+                        }
+                    }
+                }
+            },
+            401: {'description': 'Не авторизован'}
+        }
+    )
+    def post(self, request):
+        """Создать SOS заказ"""
+        # Принудительно устанавливаем order_type
+        data = request.data.copy()
+        data['order_type'] = OrderType.SOS
+        
+        serializer = OrderCreateSerializer(data=data)
+        if serializer.is_valid():
+            order = serializer.save(user=request.user)
+            order_serializer = OrderSerializer(order)
+            return Response({
+                'message': 'Ваш экстренный заказ отправлен! Ближайшие мастера уже получили уведомление.',
+                'order': order_serializer.data
+            }, status=status.HTTP_201_CREATED)
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+
 class OrderListCreateView(APIView):
-    """Список заказов и создание нового заказа"""
+    """Список заказов (DEPRECATED - используйте /scheduled/ или /sos/)"""
     permission_classes = [IsAuthenticated]
     filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
     filterset_fields = ['status', 'priority', 'master']
@@ -75,40 +427,20 @@ class OrderListCreateView(APIView):
         return Response(serializer.data)
 
     @extend_schema(
-        summary="Создать новый заказ",
+        summary="⚠️ DEPRECATED: Создать заказ (используйте /scheduled/ или /sos/)",
         description="""
-Создает новый заказ для текущего пользователя (user берется из header).
+# ⚠️ DEPRECATED
 
-**Поддерживает два сценария:**
+**Этот endpoint устарел!**
 
-1️⃣ **SOS заказ** (экстренная ситуация):
-   - Не указывается master_id
-   - Заказ отправляется всем доступным мастерам в радиусе
+Пожалуйста, используйте новые специализированные endpoints:
+- 📅 `/api/order/scheduled/` - для запланированных заказов (Order by Date)
+- 🚨 `/api/order/sos/` - для экстренных заказов (SOS)
 
-2️⃣ **Обычный заказ** (выбор конкретного мастера):
-   - Указывается master_id
-   - Заказ отправляется конкретному мастеру
-
-**Обязательные поля для обоих сценариев:**
-- text (string) - описание проблемы
-- priority (string) - приоритет заказа: 'low' (низкий) или 'high' (высокий)
-- location (string) - адрес или описание места
-- latitude (number) - широта местоположения (от -90 до 90)
-- longitude (number) - долгота местоположения (от -180 до 180)
-- car_list (array) - список ID машин [1, 2, 3]
-- category_list (array) - список ID категорий проблем [1, 2, 3]
-
-**Необязательные поля:**
-- master_id (integer) - ID мастера (для обычного заказа)
-- masters_list (array) - список ID пользователей-мастеров для рейтинга [4, 5]
-
-**⚠️ ВАЖНОЕ ОГРАНИЧЕНИЕ:**
-При указании master_id система автоматически проверяет расстояние между вашим местоположением 
-(latitude, longitude) и местоположением мастера. Если расстояние превышает 50 км, заказ будет отклонен.
-
-Это сделано для предотвращения ситуаций, когда мастер из Узбекистана получает заказ из России.
+Этот endpoint оставлен только для обратной совместимости и будет удален в будущих версиях.
         """,
-        tags=['Orders'],
+        tags=['Orders (Deprecated)'],
+        deprecated=True,
         request={
             'application/json': {
                 'type': 'object',
