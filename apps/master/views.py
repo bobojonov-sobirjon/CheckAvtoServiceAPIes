@@ -10,7 +10,7 @@ from .serializers import (
     MasterSerializer, MasterCreateSerializer, MasterUpdateSerializer, MasterNearbySerializer,
     MasterServiceSerializer, MasterServiceItemsSerializer, MasterEmployeeCreateSerializer,
     AddServiceItemsSerializer, UpdateServiceItemSerializer, AddMasterImagesSerializer, 
-    UpdateMasterImageSerializer, MasterImageSerializer, MasterEmployeeSerializer
+    UpdateMasterImageSerializer, MasterImageSerializer, MasterEmployeeSerializer,
 )
 from .permissions import IsMasterGroup, IsOwnerGroup
 from django.contrib.auth import get_user_model
@@ -109,10 +109,6 @@ class MasterProfileView(APIView):
         - `description`: Описание мастерской и услуг (текст)
         - `category`: Список ID категорий услуг (JSON массив строк, например: "[1, 2, 3]")
         - `services`: Список услуг с ценами (JSON массив объектов, каждый содержит: name, price_from, price_to, category)
-        - `card_number`: Номер банковской карты для платежей (строка, до 19 символов)
-        - `card_expiry_month`: Месяц истечения срока карты (число 1-12)
-        - `card_expiry_year`: Год истечения срока карты (число, например: 2026)
-        - `card_cvv`: CVV код карты (строка, 3-4 цифры)
         
         **Примечания:**
         - User автоматически берется из текущего авторизованного пользователя
@@ -148,11 +144,7 @@ class MasterProfileView(APIView):
                             "price_to": 100000,
                             "category": 2
                         }
-                    ],
-                    "card_number": "8600123456789012",
-                    "card_expiry_month": 12,
-                    "card_expiry_year": 2026,
-                    "card_cvv": "123"
+                    ]
                 },
                 request_only=True
             ),
@@ -519,10 +511,6 @@ class MasterDetailsView(APIView):
         - `latitude`: Широта местоположения (число от -90 до 90)
         - `longitude`: Долгота местоположения (число от -180 до 180)
         - `description`: Описание мастерской и услуг (текст)
-        - `card_number`: Номер банковской карты для платежей (строка)
-        - `card_expiry_month`: Месяц истечения срока карты (число 1-12)
-        - `card_expiry_year`: Год истечения срока карты (число)
-        - `card_cvv`: CVV код карты (строка, 3-4 цифры)
         
         **Примечание**: Изображения обновляются через отдельные endpoint'ы:
         - POST /api/master/images/ - добавить изображения
@@ -573,10 +561,6 @@ class MasterDetailsView(APIView):
         - `latitude`: Широта местоположения (число от -90 до 90)
         - `longitude`: Долгота местоположения (число от -180 до 180)
         - `description`: Описание мастерской и услуг (текст)
-        - `card_number`: Номер банковской карты для платежей (строка)
-        - `card_expiry_month`: Месяц истечения срока карты (число 1-12)
-        - `card_expiry_year`: Год истечения срока карты (число)
-        - `card_cvv`: CVV код карты (строка, 3-4 цифры)
         
         **Примечание**: Изображения обновляются через отдельные endpoint'ы:
         - POST /api/master/images/ - добавить изображения

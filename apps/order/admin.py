@@ -243,7 +243,11 @@ class OrderServiceAdmin(admin.ModelAdmin):
     def order_link(self, obj):
         """Ссылка на заказ"""
         if obj.order:
-            url = reverse('admin:order_order_change', args=[obj.order.id])
+            # Order — базовая модель, но в админке зарегистрированы прокси ScheduledOrder/SOSOrder
+            if obj.order.order_type == OrderType.SOS:
+                url = reverse('admin:order_sosorder_change', args=[obj.order.id])
+            else:
+                url = reverse('admin:order_scheduledorder_change', args=[obj.order.id])
             return format_html('<a href="{}">Заказ #{}</a>', url, obj.order.id)
         return '-'
     order_link.short_description = 'Заказ'
@@ -300,7 +304,11 @@ class ReviewAdmin(admin.ModelAdmin):
     def order_link(self, obj):
         """Ссылка на заказ"""
         if obj.order:
-            url = reverse('admin:order_order_change', args=[obj.order.id])
+            # Order — базовая модель, но в админке зарегистрированы прокси ScheduledOrder/SOSOrder
+            if obj.order.order_type == OrderType.SOS:
+                url = reverse('admin:order_sosorder_change', args=[obj.order.id])
+            else:
+                url = reverse('admin:order_scheduledorder_change', args=[obj.order.id])
             return format_html('<a href="{}">Заказ #{}</a>', url, obj.order.id)
         return '-'
     order_link.short_description = 'Заказ'

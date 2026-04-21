@@ -1,6 +1,20 @@
 from rest_framework import serializers
 from django.contrib.auth import get_user_model
-from .models import Order, OrderStatus, OrderPriority, OrderType, Rating, OrderService, Review, ReviewTag, UserRating
+from django.conf import settings
+from .models import (
+    Order,
+    OrderStatus,
+    OrderPriority,
+    OrderType,
+    OrderPaymentStatus,
+    Rating,
+    OrderService,
+    Review,
+    ReviewTag,
+    UserRating,
+)
+from apps.accounts.models import SbpPaymentIntent
+from apps.accounts.sbp_qr import pay_url_to_qr_png_base64
 from apps.car.models import Car
 from apps.categories.models import Category
 from apps.master.models import Master
@@ -25,6 +39,7 @@ class OrderSerializer(serializers.ModelSerializer):
     services = serializers.SerializerMethodField()
     reviews = serializers.SerializerMethodField()
     average_rating = serializers.SerializerMethodField()
+    payment = serializers.SerializerMethodField()
 
     class Meta:
         model = Order
@@ -34,7 +49,7 @@ class OrderSerializer(serializers.ModelSerializer):
             'text', 'status', 'status_display', 'priority', 'priority_display',
             'location', 'latitude', 'longitude', 'master', 'masters',
             'scheduled_date', 'scheduled_time_start', 'scheduled_time_end',
-            'discount', 'services', 'reviews', 'average_rating',
+            'discount', 'services', 'reviews', 'average_rating', 'payment',
             'created_at', 'updated_at'
         ]
         read_only_fields = ['id', 'created_at', 'updated_at']
@@ -101,6 +116,40 @@ class OrderSerializer(serializers.ModelSerializer):
             MasterServiceItemsSerializer(os.master_service_item).data
             for os in order_services if os.master_service_item
         ]
+
+    def get_payment(self, obj):
+        """СБП: статус оплаты заказа и QR (как /api/auth/balance/sbp-qr/), если ожидает оплату."""
+        pay_url = (getattr(settings, 'SBP_QR_PAY_URL', '') or '').strip()
+        intent = obj.sbp_payment_intent
+        data = {
+            'status': obj.payment_status,
+            'calculated_total': None,
+            'amount': None,
+            'intent_id': None,
+            'sbp_intent_status': None,
+            'pay_url': pay_url or None,
+            'qr_image_base64': None,
+            'alfa_order_id': obj.alfa_order_id or None,
+            'alfa_order_number': obj.alfa_order_number or None,
+            'form_url': obj.alfa_form_url or None,
+        }
+        try:
+            from .sbp_payment import compute_order_services_total
+
+            data['calculated_total'] = str(compute_order_services_total(obj))
+        except Exception:
+            pass
+        if intent:
+            data['amount'] = str(intent.amount)
+            data['intent_id'] = str(intent.id)
+            data['sbp_intent_status'] = intent.status
+            if (
+                obj.payment_status == OrderPaymentStatus.PENDING
+                and pay_url
+                and intent.status == SbpPaymentIntent.STATUS_PENDING
+            ):
+                data['qr_image_base64'] = pay_url_to_qr_png_base64(pay_url)
+        return data
     
     def get_reviews(self, obj):
         """Получить отзывы о заказе"""

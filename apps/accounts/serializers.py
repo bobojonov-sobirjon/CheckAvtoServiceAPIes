@@ -1,7 +1,10 @@
 from rest_framework import serializers
 from django.core.exceptions import ValidationError
+from decimal import Decimal, ROUND_HALF_UP
 import re
 from .models import CustomUser, FAQ
+
+MIN_SBP_TOPUP_RUB = Decimal('5')
 
 
 class TelegramChatIdSerializer(serializers.Serializer):
@@ -552,4 +555,59 @@ class FAQSerializer(serializers.ModelSerializer):
         model = FAQ
         fields = ['id', 'question', 'answer', 'order', 'created_at', 'updated_at']
         read_only_fields = ['id', 'created_at', 'updated_at']
+
+
+class SbpBalanceQrSerializer(serializers.Serializer):
+    """Сумма пополнения (₽) для отображения пользователю; QR ведёт на статический СБП."""
+
+    price = serializers.DecimalField(
+        max_digits=12, decimal_places=2, required=True, min_value=MIN_SBP_TOPUP_RUB,
+    )
+
+
+class SbpWebhookSerializer(serializers.Serializer):
+    """Подтверждение оплаты (сервер-сервер). intent_id — из ответа POST .../sbp-qr/."""
+
+    intent_id = serializers.UUIDField()
+    amount = serializers.DecimalField(
+        max_digits=12, decimal_places=2, required=False,
+        help_text='Если передано, должно совпадать с суммой намерения.',
+    )
+    bank_reference = serializers.CharField(max_length=256, required=False, allow_blank=True, default='')
+
+
+class SbpConfirmByTrxSerializer(serializers.Serializer):
+    """
+    Резервный вариант для ручного подтверждения через API,
+    когда банк не отправляет наш intent_id в callback.
+
+    trx_id берётся из админки/кабинета банка (например, ALFA TRX_ID).
+    """
+
+    trx_id = serializers.CharField(max_length=256)
+    amount = serializers.DecimalField(max_digits=12, decimal_places=2, required=False)
+
+
+class AlfaOrderStatusExtendedSerializer(serializers.Serializer):
+    """
+    Проверить статус заказа в Альфа-шлюзе (getOrderStatusExtended).
+
+    Для привязки к нашему intent: передайте intent_id.
+    """
+
+    alfa_order_id = serializers.CharField(max_length=64, required=False, allow_blank=True)
+    alfa_order_number = serializers.CharField(max_length=64, required=False, allow_blank=True)
+    intent_id = serializers.UUIDField(required=False)
+    amount = serializers.DecimalField(max_digits=12, decimal_places=2, required=False)
+
+    def validate(self, attrs):
+        oid = (attrs.get("alfa_order_id") or "").strip()
+        onum = (attrs.get("alfa_order_number") or "").strip()
+        if not oid and not onum:
+            raise serializers.ValidationError("Передайте alfa_order_id или alfa_order_number.")
+        attrs["alfa_order_id"] = oid
+        attrs["alfa_order_number"] = onum
+        return attrs
+
+
 

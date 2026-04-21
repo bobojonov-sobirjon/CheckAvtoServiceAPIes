@@ -1,7 +1,10 @@
 from django.contrib.auth.models import AbstractUser
 from django.db import models
+from django.db import transaction
+from django.utils import timezone
 from decimal import Decimal
 import random
+import uuid
 
 
 class CustomUser(AbstractUser):
@@ -215,6 +218,103 @@ class UserBalance(models.Model):
             defaults={'amount': 0.00}
         )
         return balance
+
+
+class SbpPaymentIntent(models.Model):
+    """
+    Намерение пополнения по СБП: после оплаты статус меняется на completed (webhook или админ).
+    Статический QR НСПК не передаёт intent_id в банк — привязка только через сумму/время ненадёжна;
+    для авто-зачисления банк должен дергать webhook или оператор подтверждает в админке.
+    """
+
+    STATUS_PENDING = 'pending'
+    STATUS_COMPLETED = 'completed'
+    STATUS_EXPIRED = 'expired'
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    user = models.ForeignKey(
+        'accounts.CustomUser',
+        on_delete=models.CASCADE,
+        related_name='sbp_intents',
+        verbose_name='Пользователь',
+    )
+    amount = models.DecimalField(max_digits=12, decimal_places=2, verbose_name='Сумма, ₽')
+    status = models.CharField(max_length=20, default=STATUS_PENDING, verbose_name='Статус')
+    created_at = models.DateTimeField(auto_now_add=True)
+    completed_at = models.DateTimeField(null=True, blank=True)
+    bank_reference = models.CharField(
+        max_length=256, blank=True, default='', verbose_name='Референс банка',
+    )
+
+    class Meta:
+        verbose_name = 'СБП: намерение оплаты'
+        verbose_name_plural = 'СБП: намерения оплаты'
+        ordering = ['-created_at']
+        indexes = [
+            models.Index(fields=['user', 'status', '-created_at']),
+        ]
+
+    def __str__(self):
+        return f'{self.id} {self.user_id} {self.amount} ₽ {self.status}'
+
+    @classmethod
+    def complete_pending(
+        cls,
+        intent_id,
+        *,
+        bank_reference: str = '',
+        expected_amount: Decimal | None = None,
+    ) -> tuple[str, 'SbpPaymentIntent | None']:
+        """
+        Идемпотентное зачисление. Возвращает (код, intent).
+        Коды: ok, already_completed, not_found, not_pending, amount_mismatch
+        """
+        with transaction.atomic():
+            try:
+                obj = cls.objects.select_for_update().get(pk=intent_id)
+            except cls.DoesNotExist:
+                return 'not_found', None
+            if obj.status == cls.STATUS_COMPLETED:
+                return 'already_completed', obj
+            if obj.status != cls.STATUS_PENDING:
+                return 'not_pending', obj
+            if expected_amount is not None and obj.amount != expected_amount:
+                return 'amount_mismatch', obj
+            balance = UserBalance.get_or_create_balance(obj.user)
+            balance.add_amount(obj.amount)
+            obj.status = cls.STATUS_COMPLETED
+            obj.completed_at = timezone.now()
+            obj.bank_reference = (bank_reference or '')[:256]
+            obj.save(update_fields=['status', 'completed_at', 'bank_reference'])
+            return 'ok', obj
+
+
+class AlfaSbpTemplateSnapshot(models.Model):
+    """
+    Копия ответа createTemplate: если getTemplateDetails даёт errorCode 5, отдаём из БД.
+    """
+
+    user = models.ForeignKey(
+        'accounts.CustomUser',
+        on_delete=models.CASCADE,
+        related_name='alfa_sbp_template_snapshots',
+        verbose_name='Пользователь',
+    )
+    template_id = models.CharField(max_length=40, verbose_name='templateId шлюза')
+    gateway_response = models.JSONField(verbose_name='Ответ шлюза (create)')
+    generated_meta = models.JSONField(null=True, blank=True, verbose_name='Поля quick-create')
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        verbose_name = 'Снимок шаблона СБП (Альфа)'
+        verbose_name_plural = 'Снимки шаблонов СБП'
+        ordering = ['-created_at']
+        constraints = [
+            models.UniqueConstraint(fields=['user', 'template_id'], name='alfa_sbp_snapshot_user_template'),
+        ]
+
+    def __str__(self):
+        return f'{self.template_id} user={self.user_id}'
 
 
 class UserSMSCode(models.Model):

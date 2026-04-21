@@ -293,6 +293,37 @@ SMSC_LOGIN = 'Check8Auto'  # SMSC.ru login
 SMSC_PASSWORD = '8Check8Auto8'  # SMSC.ru parol
 SMSC_API_URL = 'https://smsc.ru/sys/send.php'
 
+# Альфа-Банк REST (шаблоны СБП QR: templates/*.do)
+ALFA_PAYMENT_REST_BASE = os.getenv('ALFA_PAYMENT_REST_BASE', '').strip()
+ALFA_API_USERNAME = os.getenv('ALFA_API_USERNAME', '').strip()
+ALFA_API_PASSWORD = os.getenv('ALFA_API_PASSWORD', '').strip()
+ALFA_HTTP_TIMEOUT = int(os.getenv('ALFA_HTTP_TIMEOUT', '60'))
+# Только явный ALFA_MERCHANT (terminal id в это поле часто даёт errorCode 1 «Некорректный запрос»)
+ALFA_MERCHANT = os.getenv('ALFA_MERCHANT', '').strip()
+# Опционально: отдельный логин для getTemplateDetails (часто *-operator), если *-api даёт errorCode 5
+ALFA_TEMPLATES_DETAILS_USERNAME = os.getenv('ALFA_TEMPLATES_DETAILS_USERNAME', '').strip()
+ALFA_TEMPLATES_DETAILS_PASSWORD = os.getenv('ALFA_TEMPLATES_DETAILS_PASSWORD', '').strip()
+
+# Alfa acquiring (dynamic orders): return/fail URLs for register.do
+ALFA_RETURN_URL = os.getenv('ALFA_RETURN_URL', 'https://example.com/pay/success').strip()
+ALFA_FAIL_URL = os.getenv('ALFA_FAIL_URL', 'https://example.com/pay/fail').strip()
+ALFA_SESSION_TIMEOUT_SECS = int(os.getenv('ALFA_SESSION_TIMEOUT_SECS', '900'))
+
+# Автозаполнение для POST .../sbp-gateway/templates/create/ (только price)
+SBP_GATEWAY_TEMPLATE_QR_WIDTH = int(os.getenv('SBP_GATEWAY_TEMPLATE_QR_WIDTH', '300'))
+SBP_GATEWAY_TEMPLATE_QR_HEIGHT = int(os.getenv('SBP_GATEWAY_TEMPLATE_QR_HEIGHT', '300'))
+SBP_GATEWAY_TEMPLATE_DIST_CHANNEL = os.getenv('SBP_GATEWAY_TEMPLATE_DIST_CHANNEL', 'CheckAvto').strip()
+SBP_GATEWAY_TEMPLATE_VALID_YEARS = int(os.getenv('SBP_GATEWAY_TEMPLATE_VALID_YEARS', '10'))
+SBP_GATEWAY_TEMPLATE_NAME_PREFIX = os.getenv('SBP_GATEWAY_TEMPLATE_NAME_PREFIX', 'CheckAvto').strip()
+
+# СБП: статическая ссылка на QR (НСПК), из личного кабинета банка
+SBP_QR_PAY_URL = os.getenv(
+    'SBP_QR_PAY_URL',
+    'https://qr.nspk.ru/BS1A003T9OBLQLD499DOHMC28RE9OHG7?type=01&bank=100000000008&crc=2E88',
+).strip()
+# Секрет для POST /api/auth/balance/sbp-webhook/ (заголовок X-Sbp-Webhook-Secret)
+SBP_WEBHOOK_SECRET = os.getenv('SBP_WEBHOOK_SECRET', '').strip()
+
 # SMS сервис настройки
 SMS_SERVICE = 'smsc'  # Основной SMS сервис
 SMS_FALLBACK_SERVICE = 'smsc'  # Резервный SMS сервис
@@ -321,15 +352,17 @@ SPECTACULAR_SETTINGS = {
         'hideHostname': True,
     },
     'SERVERS': [
-        {'url': 'http://31.128.43.149:6060', 'description': 'Production server'},
-        {'url': 'http://localhost:8000', 'description': 'Development server'},
+        # {'url': 'http://31.128.43.149:6060', 'description': 'Production server'},
+        {'url': 'http://localhost:8002', 'description': 'Development server'},
     ],
     'TAGS': [
         {'name': 'Authentication', 'description': 'User authentication and authorization'},
         {'name': 'Cars', 'description': 'Car management endpoints'},
         {'name': 'Masters', 'description': 'Master/service provider endpoints'},
-        {'name': 'Orders', 'description': 'Order management endpoints'},
+        {'name': 'Orders (Driver)', 'description': 'Order endpoints for Driver (client)'},
+        {'name': 'Orders (Master)', 'description': 'Order endpoints for Master (service provider)'},
         {'name': 'Categories', 'description': 'Category management endpoints'},
+        {'name': 'Payments', 'description': 'Balance top-up via SBP QR'},
     ],
     'PREPROCESSING_HOOKS': [],
     'POSTPROCESSING_HOOKS': [],

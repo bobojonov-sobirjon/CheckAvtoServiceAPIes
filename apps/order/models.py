@@ -32,6 +32,13 @@ class OrderType(models.TextChoices):
     SOS = 'sos', 'SOS/Экстренный'
 
 
+class OrderPaymentStatus(models.TextChoices):
+    """Оплата заказа (СБП после завершения мастером)"""
+    NONE = 'none', 'Нет'
+    PENDING = 'pending', 'Ожидает оплаты'
+    PAID = 'paid', 'Оплачено'
+
+
 class Order(models.Model):
     """Модель заказа"""
     user = models.ForeignKey(
@@ -134,6 +141,41 @@ class Order(models.Model):
         default=0.00,
         verbose_name='Скидка',
         help_text='Скидка на заказ (в процентах или сумме)'
+    )
+    payment_status = models.CharField(
+        max_length=20,
+        choices=OrderPaymentStatus.choices,
+        default=OrderPaymentStatus.NONE,
+        verbose_name='Оплата (СБП)',
+        help_text='После complete: pending — QR для клиента; paid — webhook подтвердил оплату',
+    )
+    sbp_payment_intent = models.ForeignKey(
+        'accounts.SbpPaymentIntent',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='orders',
+        verbose_name='СБП intent оплаты заказа',
+    )
+    alfa_order_id = models.CharField(
+        max_length=64,
+        blank=True,
+        default='',
+        verbose_name='Alfa orderId (dynamic)',
+        help_text='orderId из payment/rest/register.do для getOrderStatusExtended',
+    )
+    alfa_order_number = models.CharField(
+        max_length=64,
+        blank=True,
+        default='',
+        verbose_name='Alfa orderNumber (dynamic)',
+        help_text='orderNumber отправленный в register.do (обычно order_id или intent_id)',
+    )
+    alfa_form_url = models.TextField(
+        blank=True,
+        default='',
+        verbose_name='Alfa formUrl (dynamic)',
+        help_text='formUrl из payment/rest/register.do (ссылка для оплаты)',
     )
     created_at = models.DateTimeField(
         auto_now_add=True,

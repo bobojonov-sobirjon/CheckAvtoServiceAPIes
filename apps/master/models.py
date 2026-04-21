@@ -49,28 +49,6 @@ class Master(models.Model):
     phone = models.CharField(max_length=20, default='', verbose_name='Телефон')
     working_time = models.CharField(max_length=100, default='', verbose_name='Рабочее время')
     
-    # Банковские данные
-    card_number = models.CharField(max_length=19, blank=True, verbose_name='Номер карты')
-    card_expiry_month = models.PositiveIntegerField(null=True, blank=True, verbose_name='Месяц истечения')
-    card_expiry_year = models.PositiveIntegerField(null=True, blank=True, verbose_name='Год истечения')
-    card_cvv = models.CharField(max_length=4, blank=True, verbose_name='CVV/CVC')
-    
-    # Баланс мастера
-    balance = models.DecimalField(
-        max_digits=10, 
-        decimal_places=2, 
-        default=0.00, 
-        verbose_name='Баланс мастера'
-    )
-    
-    # Резерв средств
-    reserved_amount = models.DecimalField(
-        max_digits=10, 
-        decimal_places=2, 
-        default=0.00, 
-        verbose_name='Зарезервированная сумма'
-    )
-    
     description = models.TextField(blank=True, verbose_name='Описание', null=True)
     
     # Временные метки
@@ -102,20 +80,6 @@ class Master(models.Model):
     def completion_rate(self):
         """Процент выполнения заказов"""
         return 0  # Поле удалено, всегда возвращаем 0
-    
-    def can_take_order(self, amount=200):
-        """Может ли мастер взять заказ (проверка резерва)"""
-        return self.reserved_amount >= amount
-    
-    def reserve_amount(self, amount):
-        """Зарезервировать сумму"""
-        self.reserved_amount += amount
-        self.save(update_fields=['reserved_amount'])
-    
-    def release_amount(self, amount):
-        """Освободить зарезервированную сумму"""
-        self.reserved_amount = max(0, self.reserved_amount - amount)
-        self.save(update_fields=['reserved_amount'])
 
 
 class MasterImage(models.Model):

@@ -1,7 +1,16 @@
-from django.contrib import admin
+from django.contrib import admin, messages
 from django.contrib.auth.admin import UserAdmin
 from django.contrib.sites.models import Site
-from .models import CustomUser, MasterCustomUser, CarOwner, Owner, UserBalance, UserSMSCode, FAQ
+from .models import (
+    CustomUser,
+    MasterCustomUser,
+    CarOwner,
+    Owner,
+    UserBalance,
+    UserSMSCode,
+    FAQ,
+    SbpPaymentIntent,
+)
 
 
 class UserBalanceInline(admin.StackedInline):
@@ -202,6 +211,43 @@ class UserSMSCodeAdmin(admin.ModelAdmin):
         ('Пользователь', {'fields': ('created_by', 'is_used', 'used_at')}),
         ('Даты', {'fields': ('created_at', 'expires_at')}),
     )
+
+
+@admin.register(SbpPaymentIntent)
+class SbpPaymentIntentAdmin(admin.ModelAdmin):
+    """Намерения СБП: подтверждение оплаты и зачисление вручную."""
+
+    list_display = ('id', 'user', 'amount', 'status', 'created_at', 'completed_at', 'bank_reference_short')
+    list_filter = ('status', 'created_at')
+    search_fields = ('id', 'user__email', 'user__username', 'bank_reference')
+    readonly_fields = ('id', 'created_at', 'completed_at')
+    actions = ('action_mark_paid',)
+
+    @admin.display(description='Реф. банка')
+    def bank_reference_short(self, obj):
+        t = (obj.bank_reference or '')[:40]
+        return f'{t}…' if len(obj.bank_reference or '') > 40 else t
+
+    @admin.action(description='Зачислить на баланс (оплачено)')
+    def action_mark_paid(self, request, queryset):
+        done = 0
+        skipped = 0
+        for obj in queryset:
+            code, _ = SbpPaymentIntent.complete_pending(
+                obj.pk,
+                bank_reference=f'admin:{request.user.pk}',
+            )
+            if code == 'ok':
+                done += 1
+            elif code == 'already_completed':
+                skipped += 1
+            else:
+                skipped += 1
+        self.message_user(
+            request,
+            f'Зачислено: {done}, пропущено (не pending / ошибка): {skipped}',
+            level=messages.INFO if done else messages.WARNING,
+        )
 
 
 @admin.register(FAQ)

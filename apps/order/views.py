@@ -7,20 +7,23 @@ from rest_framework.pagination import PageNumberPagination
 from django_filters.rest_framework import DjangoFilterBackend
 from django.db.models import Q
 from django.contrib.auth import get_user_model
+import uuid
 
 from drf_spectacular.utils import extend_schema, OpenApiParameter, OpenApiExample
 from drf_spectacular.types import OpenApiTypes
 
-from .models import Order, OrderStatus, OrderType, Rating, OrderService, Review, ReviewTag
+from .models import Order, OrderStatus, OrderType, OrderPaymentStatus, Rating, OrderService, Review, ReviewTag
 from .serializers import (
     OrderSerializer, OrderCreateSerializer, OrderUpdateSerializer,
     AddServicesToOrderSerializer, OrderServiceSerializer, AddMastersToOrderSerializer,
     ReviewSerializer, ReviewCreateSerializer
 )
 from .permissions import IsOrderOwnerOrMaster, IsOrderOwner, IsMaster
+from .sbp_payment import compute_order_services_total, effective_sbp_amount, create_order_payment_intent
+from apps.accounts.alfa_orders import register_order
 from apps.master.models import Master
 from apps.master.serializers import MasterSerializer
-from apps.accounts.models import UserBalance
+from apps.accounts.models import UserBalance, SbpPaymentIntent
 
 User = get_user_model()
 
@@ -37,7 +40,7 @@ class ScheduledOrderCreateView(APIView):
     permission_classes = [IsAuthenticated]
     
     @extend_schema(
-        summary="📅 Создать запланированный заказ (Order by Date)",
+        summary="Driver: создать запланированный заказ (Scheduled)",
         description="""
 # 📅 Запланированный заказ (Order by Date)
 
@@ -128,7 +131,7 @@ class ScheduledOrderCreateView(APIView):
 5. ✅ Мастер получает уведомление о новом заказе
 6. Мастер подтверждает или отклоняет заказ
         """,
-        tags=['Orders'],
+        tags=['Orders (Driver)'],
         request={
             'application/json': {
                 'type': 'object',
@@ -219,7 +222,7 @@ class SOSOrderCreateView(APIView):
     permission_classes = [IsAuthenticated]
     
     @extend_schema(
-        summary="🚨 Создать SOS заказ (экстренная помощь)",
+        summary="Driver: создать SOS заказ (экстренная помощь)",
         description="""
 # 🚨 SOS заказ (Экстренная помощь)
 
@@ -303,7 +306,7 @@ class SOSOrderCreateView(APIView):
 6. Мастер подтверждает или отклоняет заказ
 7. Клиент видит информацию о мастере и может с ним связаться
         """,
-        tags=['Orders'],
+        tags=['Orders (Driver)'],
         request={
             'application/json': {
                 'type': 'object',
@@ -461,7 +464,7 @@ class AvailableTimeSlotsView(APIView):
 }
 ```
         """,
-        tags=['Orders'],
+        tags=['Orders (Driver)'],
         parameters=[
             OpenApiParameter(
                 name='master_id',
@@ -670,7 +673,7 @@ class OrderListCreateView(APIView):
     @extend_schema(
         summary="Получить список заказов",
         description="Возвращает список заказов с возможностью фильтрации, поиска и сортировки",
-        tags=['Orders'],
+        tags=['Orders (Driver)'],
         parameters=[
             {'name': 'status', 'in': 'query', 'description': 'Фильтр по статусу заказа', 'type': 'string', 'enum': [choice[0] for choice in OrderStatus.choices]},
             {'name': 'priority', 'in': 'query', 'description': 'Фильтр по приоритету заказа', 'type': 'string', 'enum': ['low', 'high']},
@@ -745,7 +748,7 @@ class OrderDetailView(APIView):
     @extend_schema(
         summary="Получить детали заказа",
         description="Возвращает детальную информацию о конкретном заказе",
-        tags=['Orders'],
+        tags=['Orders (Driver)'],
         parameters=[
             {'name': 'id', 'in': 'path', 'description': 'ID заказа', 'type': 'integer', 'required': True},
         ],
@@ -777,7 +780,7 @@ class OrderDetailView(APIView):
                   "latitude - широта местоположения (от -90 до 90), "
                   "longitude - долгота местоположения (от -180 до 180), "
                   "master - ID мастера.",
-        tags=['Orders'],
+        tags=['Orders (Driver)'],
         parameters=[
             {'name': 'id', 'in': 'path', 'description': 'ID заказа', 'type': 'integer', 'required': True},
         ],
@@ -827,7 +830,7 @@ class OrderDetailView(APIView):
                   "latitude - широта местоположения (от -90 до 90), "
                   "longitude - долгота местоположения (от -180 до 180), "
                   "master - ID мастера.",
-        tags=['Orders'],
+        tags=['Orders (Driver)'],
         parameters=[
             {'name': 'id', 'in': 'path', 'description': 'ID заказа', 'type': 'integer', 'required': True},
         ],
@@ -871,7 +874,7 @@ class OrderDetailView(APIView):
     @extend_schema(
         summary="Удалить заказ",
         description="Удаляет заказ из системы",
-        tags=['Orders'],
+        tags=['Orders (Driver)'],
         parameters=[
             {'name': 'id', 'in': 'path', 'description': 'ID заказа', 'type': 'integer', 'required': True},
         ],
@@ -985,7 +988,7 @@ GET /api/order/by-user/?order_type=sos
 GET /api/order/by-user/?order_type=scheduled&status=pending
 ```
         """,
-        tags=['Orders'],
+        tags=['Orders (Driver)'],
         parameters=[
             OpenApiParameter(name='status', type=OpenApiTypes.STR, location=OpenApiParameter.QUERY, description='Фильтр по статусу заказа', required=False, enum=[choice[0] for choice in OrderStatus.choices]),
             OpenApiParameter(name='priority', type=OpenApiTypes.STR, location=OpenApiParameter.QUERY, description='Фильтр по приоритету (low, high)', required=False, enum=['low', 'high']),
@@ -1214,7 +1217,7 @@ GET /api/order/by-master/?order_type=sos
 GET /api/order/by-master/?order_type=scheduled&status=pending
 ```
         """,
-        tags=['Orders'],
+        tags=['Orders (Master)'],
         parameters=[
             OpenApiParameter(name='status', type=OpenApiTypes.STR, location=OpenApiParameter.QUERY, description='Фильтр по статусу заказа', required=False, enum=[choice[0] for choice in OrderStatus.choices]),
             OpenApiParameter(name='priority', type=OpenApiTypes.STR, location=OpenApiParameter.QUERY, description='Фильтр по приоритету (low, high)', required=False, enum=['low', 'high']),
@@ -1376,11 +1379,11 @@ class UpdateOrderStatusView(APIView):
     permission_classes = [IsAuthenticated, IsOrderOwnerOrMaster]
     
     @extend_schema(
-        summary="Обновить статус заказа",
+        summary="Master: изменить статус заказа",
         description="Обновляет статус заказа на новый. "
                   "Статусы: pending - ожидает, in_progress - в работе, completed - завершен, cancelled - отменен, rejected - отклонен. "
                   "Доступно только владельцу заказа или мастеру.",
-        tags=['Orders'],
+        tags=['Orders (Master)'],
         parameters=[
             {'name': 'order_id', 'in': 'path', 'description': 'ID заказа', 'type': 'integer', 'required': True},
         ],
@@ -1444,7 +1447,7 @@ class AcceptOrderView(APIView):
     permission_classes = [IsAuthenticated, IsMaster]
     
     @extend_schema(
-        summary="Принять заказ в работу",
+        summary="Master: принять заказ в работу",
         description="""
 Принимает заказ в работу с проверкой минимального баланса **мастера** (1000 ₽) и списанием 200 ₽ за каждый заказ.
 
@@ -1463,7 +1466,7 @@ class AcceptOrderView(APIView):
 
 **Важно:** Проверяется баланс **мастера**, который принимает заказ, а не клиента!
         """,
-        tags=['Orders'],
+        tags=['Orders (Master)'],
         parameters=[
             {'name': 'order_id', 'in': 'path', 'description': 'ID заказа', 'type': 'integer', 'required': True},
         ],
@@ -1561,52 +1564,34 @@ class CompleteOrderView(APIView):
     """
     API для завершения заказа (отметка как выполненного)
     """
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, IsMaster]
+
+    def _master(self, request):
+        return request.user.master_profiles.first()
     
     @extend_schema(
-        summary="Завершить заказ",
+        summary="Master: завершить заказ (Completed)",
         description="""
 ## Описание
-Завершает заказ, устанавливая статус **COMPLETED** (Завершен).
+Завершает заказ (**COMPLETED**). Сумма берётся из услуг заказа (`OrderService` / цены услуг мастера), без тела запроса.
+Создаётся оплата СБП как у **POST /api/auth/balance/sbp-qr/** (тот же `intent_id`, QR, `pay_url`) для **клиента** (водителя).
 
-## 🎯 Когда использовать?
-- ✅ Работа по заказу выполнена
-- ✅ Клиент доволен результатом
-- ✅ Заказ готов к закрытию
-- ✅ Можно оставить рейтинг и отзыв
+## Условия
+- В заказе должны быть добавлены услуги (`add-services/`), сумма после скидки > 0.
+- В `.env` должен быть `SBP_QR_PAY_URL`.
+- Только назначенный мастер заказа.
 
-## Требования:
-- Заказ должен существовать
-- Пользователь должен быть авторизован
+## Статусы оплаты заказа (`order.payment`)
+- `none` → после `complete`: `pending`, пока клиент не оплатит
+- `paid` — после webhook **POST /api/auth/balance/sbp-webhook/** по этому `intent_id`
 
 ## Пример запроса:
 ```
 POST /api/order/5/complete/
 ```
-
-## Response:
-```json
-{
-  "message": "Заказ успешно завершен",
-  "order": {
-    "id": 5,
-    "status": "completed",
-    "status_display": "Завершен",
-    "user": {...},
-    "master": {...},
-    "text": "Замена масла",
-    "created_at": "2026-01-30T10:00:00Z"
-  }
-}
-```
-
-## Workflow:
-1. Мастер завершает работу по заказу
-2. Отправляет POST запрос на `/api/order/{order_id}/complete/`
-3. Заказ переходит в статус **COMPLETED**
-4. Клиент может оставить рейтинг и отзыв
+(без body)
         """,
-        tags=['Orders'],
+        tags=['Orders (Master)'],
         parameters=[
             {'name': 'order_id', 'in': 'path', 'description': 'ID заказа', 'type': 'integer', 'required': True},
         ],
@@ -1615,9 +1600,19 @@ POST /api/order/5/complete/
                 'type': 'object',
                 'properties': {
                     'message': {'type': 'string', 'example': 'Заказ успешно завершен'},
-                    'order': {'$ref': '#/components/schemas/Order'}
+                    'order': {'$ref': '#/components/schemas/Order'},
+                    'payment': {
+                        'type': 'object',
+                        'properties': {
+                            'intent_id': {'type': 'string'},
+                            'price': {'type': 'string'},
+                            'pay_url': {'type': 'string'},
+                            'qr_image_base64': {'type': 'string'},
+                        },
+                    },
                 }
             },
+            400: {'type': 'object', 'properties': {'error': {'type': 'string'}}},
             404: {
                 'type': 'object',
                 'properties': {'error': {'type': 'string', 'example': 'Заказ не найден'}}
@@ -1626,28 +1621,268 @@ POST /api/order/5/complete/
                 'type': 'object',
                 'properties': {'detail': {'type': 'string', 'example': 'Authentication credentials were not provided.'}}
             },
+            503: {'type': 'object', 'properties': {'error': {'type': 'string'}}},
         }
     )
     def post(self, request, order_id):
-        """Завершить заказ (установить статус COMPLETED)"""
+        """Завершить заказ: COMPLETED + СБП intent для клиента (как balance/sbp-qr)."""
+        master = self._master(request)
+        if not master:
+            return Response({'error': 'Пользователь не является мастером'}, status=status.HTTP_403_FORBIDDEN)
+
         try:
-            order = Order.objects.get(id=order_id)
-            
-            # Устанавливаем статус COMPLETED
-            order.status = OrderStatus.COMPLETED
-            order.save()
-            
-            serializer = OrderSerializer(order, context={'request': request})
-            return Response({
-                'message': 'Заказ успешно завершен',
-                'order': serializer.data
-            }, status=status.HTTP_200_OK)
-        
+            order = Order.objects.prefetch_related(
+                'order_services__master_service_item'
+            ).get(id=order_id)
         except Order.DoesNotExist:
+            return Response({'error': 'Заказ не найден'}, status=status.HTTP_404_NOT_FOUND)
+
+        if order.master_id != master.id:
             return Response(
-                {'error': 'Заказ не найден'}, 
-                status=status.HTTP_404_NOT_FOUND
+                {'error': 'Этот заказ назначен другому мастеру'},
+                status=status.HTTP_403_FORBIDDEN,
             )
+
+        if order.status == OrderStatus.COMPLETED and order.payment_status == OrderPaymentStatus.PAID:
+            serializer = OrderSerializer(order, context={'request': request})
+            return Response(
+                {
+                    'message': 'Заказ уже завершён и оплачен',
+                    'order': serializer.data,
+                },
+                status=status.HTTP_200_OK,
+            )
+
+        if order.status == OrderStatus.COMPLETED and order.payment_status == OrderPaymentStatus.PENDING:
+            if order.sbp_payment_intent_id:
+                from django.conf import settings as dj_settings
+                from apps.accounts.sbp_qr import pay_url_to_qr_png_base64
+
+                pay_url = (getattr(dj_settings, 'SBP_QR_PAY_URL', '') or '').strip()
+                intent = order.sbp_payment_intent
+                serializer = OrderSerializer(order, context={'request': request})
+                return Response(
+                    {
+                        'message': 'Заказ уже завершён, ожидается оплата',
+                        'order': serializer.data,
+                        'payment': {
+                            'intent_id': str(intent.id),
+                            'price': str(intent.amount),
+                            'pay_url': pay_url,
+                            'qr_image_base64': pay_url_to_qr_png_base64(pay_url) if pay_url else None,
+                        },
+                    },
+                    status=status.HTTP_200_OK,
+                )
+
+        if order.status == OrderStatus.COMPLETED:
+            serializer = OrderSerializer(order, context={'request': request})
+            return Response(
+                {
+                    'message': 'Заказ уже завершён',
+                    'order': serializer.data,
+                },
+                status=status.HTTP_200_OK,
+            )
+
+        if not order.order_services.exists():
+            return Response(
+                {'error': 'Добавьте услуги к заказу (POST /api/order/add-services/) перед завершением'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        raw_total = compute_order_services_total(order)
+        if raw_total <= 0:
+            breakdown = []
+            try:
+                for os in order.order_services.select_related('master_service_item'):
+                    msi = os.master_service_item
+                    if not msi:
+                        continue
+                    breakdown.append(
+                        {
+                            'order_service_id': os.id,
+                            'service_item_id': msi.id,
+                            'name': msi.name,
+                            'price_from': str(msi.price_from),
+                            'price_to': str(msi.price_to),
+                        }
+                    )
+            except Exception:
+                breakdown = []
+            return Response(
+                {
+                    'error': 'Сумма заказа по услугам должна быть больше 0 (проверьте услуги и скидку)',
+                    'debug': {
+                        'order_id': order.id,
+                        'discount': str(order.discount),
+                        'services': breakdown,
+                        'calculated_total': str(raw_total),
+                    },
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        amount = effective_sbp_amount(raw_total)
+
+        # Dynamic Alfa order (register.do) → orderId/formUrl
+        # If already registered earlier, reuse to avoid "orderNumber already processed".
+        if order.alfa_order_id and order.alfa_form_url:
+            alfa_order_id = order.alfa_order_id
+            order_number = order.alfa_order_number or f'order-{order.id}'
+            form_url = order.alfa_form_url
+        else:
+            order_number = order.alfa_order_number or f'order-{order.id}'
+            from django.conf import settings as dj_settings
+            gw = register_order(
+                order_number=order_number,
+                amount_kopecks=int(amount * 100),
+                description=f'CheckAvto order #{order.id}',
+                return_url=getattr(dj_settings, 'ALFA_RETURN_URL', ''),
+                fail_url=getattr(dj_settings, 'ALFA_FAIL_URL', ''),
+                session_timeout_secs=getattr(dj_settings, 'ALFA_SESSION_TIMEOUT_SECS', 900),
+            )
+            if gw.get('error') or str(gw.get('errorCode', '0')) not in ('0', '00', 0):
+                return Response({'error': 'Alfa register.do failed', 'gateway': gw}, status=status.HTTP_502_BAD_GATEWAY)
+            alfa_order_id = str(gw.get('orderId') or '').strip()
+            form_url = str(gw.get('formUrl') or '').strip()
+
+        # We still create local intent for internal linking + webhook/manual completion if needed
+        try:
+            intent, pay_url, qr_b64 = create_order_payment_intent(order, amount=amount)
+        except ValueError as e:
+            return Response(
+                {'error': str(e)},
+                status=status.HTTP_503_SERVICE_UNAVAILABLE,
+            )
+
+        order.status = OrderStatus.COMPLETED
+        order.payment_status = OrderPaymentStatus.PENDING
+        order.sbp_payment_intent = intent
+        order.alfa_order_id = alfa_order_id
+        order.alfa_order_number = order_number
+        order.alfa_form_url = form_url
+        order.save(update_fields=['status', 'payment_status', 'sbp_payment_intent', 'alfa_order_id', 'alfa_order_number', 'alfa_form_url', 'updated_at'])
+
+        serializer = OrderSerializer(order, context={'request': request})
+        return Response(
+            {
+                'message': 'Заказ успешно завершен. Оплата: QR для клиента (как /api/auth/balance/sbp-qr/).',
+                'order': serializer.data,
+                'payment': {
+                    'intent_id': str(intent.id),
+                    'price': str(amount),
+                    'calculated_total': str(raw_total),
+                    'pay_url': pay_url,
+                    'qr_image_base64': qr_b64,
+                    'alfa_order_id': alfa_order_id,
+                    'alfa_order_number': order_number,
+                    'form_url': form_url,
+                    'note': (
+                        'Клиент оплачивает по QR; статус intent: GET /api/auth/balance/sbp-intent/{intent_id}/. '
+                        'Заказ payment: поле order.payment в ответе GET заказа.'
+                    ),
+                },
+            },
+            status=status.HTTP_200_OK,
+        )
+
+
+class ResendOrderPaymentView(APIView):
+    """
+    Повторно открыть оплату (новый formUrl/orderId) если клиент не успел оплатить.
+    """
+
+    permission_classes = [IsAuthenticated, IsMaster]
+
+    @extend_schema(
+        summary="Master: resend payment (новый formUrl)",
+        description=(
+            "Если клиент не успел оплатить (сессия истекла), создаём новый dynamic order в Альфа (register.do) "
+            "с новым уникальным orderNumber, чтобы не было ошибки «заказ с таким номером уже обработан»."
+        ),
+        tags=["Orders (Master)"],
+        responses={200: {"type": "object"}, 400: {"type": "object"}, 403: {"type": "object"}, 404: {"type": "object"}, 502: {"type": "object"}},
+    )
+    def post(self, request, order_id):
+        master = request.user.master_profiles.first()
+        if not master:
+            return Response({'error': 'Пользователь не является мастером'}, status=status.HTTP_403_FORBIDDEN)
+
+        try:
+            order = Order.objects.prefetch_related('order_services__master_service_item').get(id=order_id)
+        except Order.DoesNotExist:
+            return Response({'error': 'Заказ не найден'}, status=status.HTTP_404_NOT_FOUND)
+
+        if order.master_id != master.id:
+            return Response({'error': 'Этот заказ назначен другому мастеру'}, status=status.HTTP_403_FORBIDDEN)
+
+        if order.status != OrderStatus.COMPLETED:
+            return Response({'error': 'Resend доступен только после завершения заказа (completed).'}, status=status.HTTP_400_BAD_REQUEST)
+
+        if order.payment_status == OrderPaymentStatus.PAID:
+            serializer = OrderSerializer(order, context={'request': request})
+            return Response({'message': 'Заказ уже оплачен', 'order': serializer.data}, status=status.HTTP_200_OK)
+
+        if not order.order_services.exists():
+            return Response({'error': 'Добавьте услуги к заказу перед оплатой'}, status=status.HTTP_400_BAD_REQUEST)
+
+        raw_total = compute_order_services_total(order)
+        if raw_total <= 0:
+            return Response({'error': 'Сумма заказа по услугам должна быть больше 0'}, status=status.HTTP_400_BAD_REQUEST)
+
+        amount = effective_sbp_amount(raw_total)
+
+        # новый уникальный orderNumber (Alfa ограничивает 32 символа)
+        suffix = uuid.uuid4().hex[:8]
+        order_number = f'order-{order.id}-{suffix}'[:32]
+
+        from django.conf import settings as dj_settings
+        gw = register_order(
+            order_number=order_number,
+            amount_kopecks=int(amount * 100),
+            description=f'CheckAvto order #{order.id} (resend)',
+            return_url=getattr(dj_settings, 'ALFA_RETURN_URL', ''),
+            fail_url=getattr(dj_settings, 'ALFA_FAIL_URL', ''),
+            session_timeout_secs=getattr(dj_settings, 'ALFA_SESSION_TIMEOUT_SECS', 900),
+        )
+        if gw.get('error') or str(gw.get('errorCode', '0')) not in ('0', '00', 0):
+            return Response({'error': 'Alfa register.do failed', 'gateway': gw}, status=status.HTTP_502_BAD_GATEWAY)
+
+        alfa_order_id = str(gw.get('orderId') or '').strip()
+        form_url = str(gw.get('formUrl') or '').strip()
+
+        # новый internal intent (актуальная попытка оплаты)
+        intent = SbpPaymentIntent.objects.create(
+            user=order.user,
+            amount=amount,
+            status=SbpPaymentIntent.STATUS_PENDING,
+        )
+
+        order.payment_status = OrderPaymentStatus.PENDING
+        order.sbp_payment_intent = intent
+        order.alfa_order_id = alfa_order_id
+        order.alfa_order_number = order_number
+        order.alfa_form_url = form_url
+        order.save(update_fields=['payment_status', 'sbp_payment_intent', 'alfa_order_id', 'alfa_order_number', 'alfa_form_url', 'updated_at'])
+
+        serializer = OrderSerializer(order, context={'request': request})
+        return Response(
+            {
+                'success': True,
+                'message': 'Новая оплата создана (resend).',
+                'order': serializer.data,
+                'payment': {
+                    'intent_id': str(intent.id),
+                    'price': str(amount),
+                    'calculated_total': str(raw_total),
+                    'alfa_order_id': alfa_order_id,
+                    'alfa_order_number': order_number,
+                    'form_url': form_url,
+                },
+            },
+            status=status.HTTP_200_OK,
+        )
 
 
 class CreateReviewView(APIView):
@@ -1714,7 +1949,7 @@ class CreateReviewView(APIView):
 3. ✅ Обновляется средний рейтинг каждого мастера
 4. ✅ Рейтинг появляется в профиле мастера
         """,
-        tags=['Orders'],
+        tags=['Orders (Driver)'],
         request=ReviewCreateSerializer,
         responses={
             201: ReviewSerializer,
@@ -1940,7 +2175,7 @@ GET /api/order/available/?master_id=5&radius=15&category=1&location=Ташкен
 GET /api/order/available/?master_id=5&radius=10&page=2&page_size=20
 ```
         """,
-        tags=['Orders'],
+        tags=['Orders (Master)'],
         parameters=[
             OpenApiParameter(
                 name='master_id',
@@ -2264,7 +2499,7 @@ class AddServicesToOrderView(APIView):
 ## Response
 Возвращает список добавленных услуг с полной информацией о каждой услуге.
         """,
-        tags=['Orders'],
+        tags=['Orders (Driver)'],
         request=AddServicesToOrderSerializer,
         responses={
             201: OrderServiceSerializer(many=True),
@@ -2356,7 +2591,7 @@ GET /api/order/services-list/?master_id=5
 - Категория
 - Мастер
         """,
-        tags=['Orders'],
+        tags=['Orders (Driver)'],
         parameters=[
             OpenApiParameter(
                 name='master_id',
@@ -2484,7 +2719,7 @@ class AddMastersToOrderView(APIView):
 - Когда мастер хочет делегировать заказ своим сотрудникам
 - Для командной работы над сложным заказом
         """,
-        tags=['Orders'],
+        tags=['Orders (Master)'],
         request=AddMastersToOrderSerializer,
         responses={
             200: OrderSerializer,

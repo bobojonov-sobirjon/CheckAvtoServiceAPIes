@@ -34,12 +34,13 @@ class MasterSerializer(serializers.ModelSerializer):
         fields = [
             'id', 'user_info', 'name', 'city', 'address', 
             'latitude', 'longitude', 'phone', 'working_time', 'services',
-            'card_number', 'card_expiry_month', 'card_expiry_year', 
-            'card_cvv', 'balance', 'reserved_amount', 'description', 'images', 
+            'description', 'images', 
             'category_data', 'rating_data', 'masters', 'distance', 'created_at', 'updated_at', 
             'last_activity'
         ]
-        read_only_fields = ['id', 'user', 'created_at', 'updated_at', 'last_activity', 'distance']
+        read_only_fields = [
+            'id', 'user', 'created_at', 'updated_at', 'last_activity', 'distance',
+        ]
     
     def get_user_info(self, obj):
         """Получить полную информацию о пользователе"""
@@ -176,8 +177,7 @@ class MasterCreateSerializer(serializers.ModelSerializer):
         model = Master
         fields = [
             'name', 'city', 'address', 'latitude', 'longitude', 'phone', 'working_time',
-            'description', 'services', 'category', 'card_number', 
-            'card_expiry_month', 'card_expiry_year', 'card_cvv'
+            'description', 'services', 'category',
         ]
         extra_kwargs = {
             'name': {'required': False, 'allow_blank': True},
@@ -188,10 +188,6 @@ class MasterCreateSerializer(serializers.ModelSerializer):
             'phone': {'required': False, 'allow_blank': True},
             'working_time': {'required': False, 'allow_blank': True},
             'description': {'required': False, 'allow_blank': True, 'allow_null': True},
-            'card_number': {'required': False, 'allow_blank': True},
-            'card_expiry_month': {'required': False},
-            'card_expiry_year': {'required': False},
-            'card_cvv': {'required': False, 'allow_blank': True},
         }
     
     def to_internal_value(self, data):
@@ -402,9 +398,8 @@ class MasterUpdateSerializer(serializers.ModelSerializer):
     class Meta:
         model = Master
         fields = [
-            'name', 'city', 'address', 'latitude', 'longitude', 'phone', 'working_time', 
-            'card_number', 'card_expiry_month', 'card_expiry_year', 
-            'card_cvv', 'description'
+            'name', 'city', 'address', 'latitude', 'longitude', 'phone', 'working_time',
+            'description',
         ]
         extra_kwargs = {
             'name': {'required': False, 'allow_blank': True},
@@ -414,10 +409,6 @@ class MasterUpdateSerializer(serializers.ModelSerializer):
             'longitude': {'required': False},
             'phone': {'required': False},
             'working_time': {'required': False},
-            'card_number': {'required': False},
-            'card_expiry_month': {'required': False},
-            'card_expiry_year': {'required': False},
-            'card_cvv': {'required': False},
             'description': {'required': False, 'allow_blank': True, 'allow_null': True},
         }
     

@@ -31,6 +31,7 @@ urlpatterns = [
     path('<int:order_id>/status/', views.UpdateOrderStatusView.as_view(), name='update-status'),
     path('<int:order_id>/accept/', views.AcceptOrderView.as_view(), name='accept-order'),
     path('<int:order_id>/complete/', views.CompleteOrderView.as_view(), name='complete-order'),
+    path('<int:order_id>/payment/resend/', views.ResendOrderPaymentView.as_view(), name='resend-order-payment'),
     
     # Review endpoints (replaces old Rating API)
     path('reviews/create/', views.CreateReviewView.as_view(), name='create-review'),

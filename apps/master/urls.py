@@ -4,7 +4,7 @@ from .views import (
     MasterEmployeeView, MasterFilterChoicesView, MastersByUserView,
     AddServiceItemsView, UpdateServiceItemView, DeleteServiceItemView,
     AddMasterImagesView, UpdateMasterImageView, DeleteMasterImageView,
-    MasterEmployeeListView
+    MasterEmployeeListView,
 )
 
 urlpatterns = [

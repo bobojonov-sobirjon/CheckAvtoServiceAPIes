@@ -72,14 +72,6 @@ class MasterAdmin(admin.ModelAdmin):
             'fields': ('phone', 'working_time')
         }),
         # Services section removed - now handled by MasterService model
-        ('Банковские данные', {
-            'fields': ('card_number', 'card_expiry_month', 'card_expiry_year', 'card_cvv'),
-            'classes': ('collapse',)
-        }),
-        ('Финансы', {
-            'fields': ('balance', 'reserved_amount'),
-            'classes': ('collapse',)
-        }),
         ('Временные метки', {
             'fields': ('created_at', 'updated_at', 'last_activity'),
             'classes': ('collapse',)

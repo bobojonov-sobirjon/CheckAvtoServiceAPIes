@@ -1,8 +1,13 @@
 from django.urls import path
 from .views import (
-    LoginView, CheckSMSCodeView, SMSServiceStatusView, 
+    LoginView, CheckSMSCodeView, SMSServiceStatusView,
     UserDetailsView, UserDetailsByIdView, FAQListView, UpdateTelegramChatIdView,
-    HealthCheckView
+    HealthCheckView,
+    SbpBalanceQrView,
+    SbpIntentStatusView,
+    SbpWebhookView,
+    SbpConfirmByTrxView,
+    AlfaGetOrderStatusExtendedView,
 )
 
 urlpatterns = [
@@ -25,4 +30,11 @@ urlpatterns = [
     
     # FAQ endpoints
     path('faq/', FAQListView.as_view(), name='faq_list'),
+
+    # Пополнение: QR СБП (статическая ссылка НСПК)
+    path('balance/sbp-qr/', SbpBalanceQrView.as_view(), name='balance_sbp_qr'),
+    path('balance/sbp-intent/<uuid:intent_id>/', SbpIntentStatusView.as_view(), name='balance_sbp_intent'),
+    path('balance/sbp-webhook/', SbpWebhookView.as_view(), name='balance_sbp_webhook'),
+    path('balance/sbp-confirm-by-trx/', SbpConfirmByTrxView.as_view(), name='balance_sbp_confirm_by_trx'),
+    path('balance/alfa-order-status/', AlfaGetOrderStatusExtendedView.as_view(), name='balance_alfa_order_status'),
 ]
