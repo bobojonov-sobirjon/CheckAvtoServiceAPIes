@@ -1747,14 +1747,11 @@ POST /api/order/5/complete/
             alfa_order_id = str(gw.get('orderId') or '').strip()
             form_url = str(gw.get('formUrl') or '').strip()
 
-        # We still create local intent for internal linking + webhook/manual completion if needed
+        # Local intent (optional): used for internal tracking; do NOT show static pay_url to client.
         try:
-            intent, pay_url, qr_b64 = create_order_payment_intent(order, amount=amount)
+            intent, _pay_url, _qr_b64 = create_order_payment_intent(order, amount=amount)
         except ValueError as e:
-            return Response(
-                {'error': str(e)},
-                status=status.HTTP_503_SERVICE_UNAVAILABLE,
-            )
+            return Response({'error': str(e)}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
 
         order.status = OrderStatus.COMPLETED
         order.payment_status = OrderPaymentStatus.PENDING
@@ -1773,14 +1770,11 @@ POST /api/order/5/complete/
                     'intent_id': str(intent.id),
                     'price': str(amount),
                     'calculated_total': str(raw_total),
-                    'pay_url': pay_url,
-                    'qr_image_base64': qr_b64,
                     'alfa_order_id': alfa_order_id,
                     'alfa_order_number': order_number,
                     'form_url': form_url,
                     'note': (
-                        'Клиент оплачивает по QR; статус intent: GET /api/auth/balance/sbp-intent/{intent_id}/. '
-                        'Заказ payment: поле order.payment в ответе GET заказа.'
+                        'Клиент оплачивает по form_url (mdOrder). Статус: POST /api/auth/balance/alfa-order-status/.'
                     ),
                 },
             },

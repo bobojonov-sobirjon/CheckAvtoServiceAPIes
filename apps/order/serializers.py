@@ -118,17 +118,15 @@ class OrderSerializer(serializers.ModelSerializer):
         ]
 
     def get_payment(self, obj):
-        """СБП: статус оплаты заказа и QR (как /api/auth/balance/sbp-qr/), если ожидает оплату."""
+        """Оплата заказа: dynamic Alfa form_url + статус intent (если используется)."""
         pay_url = (getattr(settings, 'SBP_QR_PAY_URL', '') or '').strip()
         intent = obj.sbp_payment_intent
-        data = {
+        data: dict = {
             'status': obj.payment_status,
             'calculated_total': None,
             'amount': None,
             'intent_id': None,
             'sbp_intent_status': None,
-            'pay_url': pay_url or None,
-            'qr_image_base64': None,
             'alfa_order_id': obj.alfa_order_id or None,
             'alfa_order_number': obj.alfa_order_number or None,
             'form_url': obj.alfa_form_url or None,
@@ -143,12 +141,8 @@ class OrderSerializer(serializers.ModelSerializer):
             data['amount'] = str(intent.amount)
             data['intent_id'] = str(intent.id)
             data['sbp_intent_status'] = intent.status
-            if (
-                obj.payment_status == OrderPaymentStatus.PENDING
-                and pay_url
-                and intent.status == SbpPaymentIntent.STATUS_PENDING
-            ):
-                data['qr_image_base64'] = pay_url_to_qr_png_base64(pay_url)
+        # NB: Для заказов используем только form_url (dynamic). Статический pay_url/QR здесь не отдаём,
+        # чтобы клиент не оплатил «мимо» нужного mdOrder.
         return data
     
     def get_reviews(self, obj):
