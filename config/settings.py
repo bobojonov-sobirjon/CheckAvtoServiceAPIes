@@ -41,6 +41,7 @@ LOCAL_APPS = [
 INSTALLED_APPS = [
     'daphne',  # Must be first for WebSocket support
     'django.contrib.sites',
+    'jazzmin',  # Must be before django.contrib.admin
     'django.contrib.admin',
     'django.contrib.auth',
     'django.contrib.contenttypes',
@@ -55,6 +56,67 @@ INSTALLED_APPS = [
     'channels',
     *LOCAL_APPS,
 ]
+
+# Jazzmin UI настройки
+JAZZMIN_SETTINGS = {
+    "site_title": "CheckAvto Admin",
+    "site_header": "CheckAvto",
+    "site_brand": "CheckAvto",
+    "welcome_sign": "Панель администрирования",
+    "copyright": "CheckAvto",
+    "search_model": "accounts.CustomUser",
+    # Sidebar: user avatar panel off
+    "show_sidebar_user_panel": False,
+    "show_sidebar": True,
+    # Make app sections collapsible (collapsed by default)
+    "navigation_expanded": False,
+    # Sidebar order (apps)
+    "order_with_respect_to": [
+        "accounts",
+        "categories",
+        "car",
+        "master",
+        "order",
+        "chat",
+        "auth",
+    ],
+    "hide_models": [
+        # related models are managed inline
+        "order.OrderService",
+        "order.Review",
+        "chat.ChatMessage",
+        "accounts.UserBalance",
+        "accounts.SbpPaymentIntent",
+        "car.Car",
+    ],
+    "icons": {
+        "accounts": "fas fa-user",
+        "accounts.CustomUser": "fas fa-user",
+        "accounts.MasterCustomUser": "fas fa-user-tie",
+        "accounts.CarOwner": "fas fa-id-card",
+        "accounts.Owner": "fas fa-user-shield",
+        "accounts.FAQ": "fas fa-question-circle",
+        "accounts.PaymentTransaction": "fas fa-money-check-alt",
+        "categories": "fas fa-layer-group",
+        "categories.Category": "fas fa-layer-group",
+        "car": "fas fa-car",
+        "car.Car": "fas fa-car",
+        "master": "fas fa-tools",
+        "master.Master": "fas fa-tools",
+        "master.MasterService": "fas fa-list",
+        "master.MasterEmployee": "fas fa-users",
+        "order": "fas fa-clipboard-list",
+        "order.ScheduledOrder": "fas fa-calendar-check",
+        "order.SOSOrder": "fas fa-triangle-exclamation",
+        "chat": "fas fa-comments",
+        "chat.ChatRoom": "fas fa-comments",
+        "auth.Group": "fas fa-users-cog",
+    },
+    "topmenu_links": [
+        {"name": "Документация API", "url": "/api/schema/swagger-ui/", "new_window": True},
+    ],
+    "custom_css": "admin/custom.css",
+}
 
 LOCAL_MIDDLEWARE = [
     'config.middleware.middleware.JsonErrorResponseMiddleware',
@@ -95,12 +157,22 @@ WSGI_APPLICATION = 'config.wsgi.application'
 # ASGI Application for WebSocket support
 ASGI_APPLICATION = 'config.asgi.application'
 
-# Channel Layers Configuration (InMemory - no Redis needed)
-CHANNEL_LAYERS = {
-    'default': {
-        'BACKEND': 'channels.layers.InMemoryChannelLayer'
+# Channel Layers Configuration
+# IMPORTANT: InMemoryChannelLayer works only within a single process.
+# If you run HTTP (runserver) and WS (daphne) as separate processes,
+# you MUST use Redis channel layer for cross-process group_send.
+REDIS_URL = os.getenv("REDIS_URL") or os.getenv("CELERY_BROKER_URL", "")
+if REDIS_URL.startswith("redis://"):
+    CHANNEL_LAYERS = {
+        "default": {
+            "BACKEND": "channels_redis.core.RedisChannelLayer",
+            "CONFIG": {"hosts": [REDIS_URL]},
+        }
     }
-}
+else:
+    CHANNEL_LAYERS = {
+        "default": {"BACKEND": "channels.layers.InMemoryChannelLayer"},
+    }
 
 
 # Database
@@ -155,6 +227,40 @@ USE_I18N = True
 
 USE_TZ = True
 
+# Celery
+CELERY_BROKER_URL = os.getenv('CELERY_BROKER_URL', 'redis://localhost:6379/0')
+CELERY_RESULT_BACKEND = os.getenv('CELERY_RESULT_BACKEND', CELERY_BROKER_URL)
+CELERY_TIMEZONE = TIME_ZONE
+CELERY_TASK_TRACK_STARTED = True
+CELERY_TASK_TIME_LIMIT = int(os.getenv('CELERY_TASK_TIME_LIMIT', '300'))
+
+# Master offer deadlines
+MASTER_OFFER_RESPONSE_MINUTES = int(os.getenv('MASTER_OFFER_RESPONSE_MINUTES', '15'))
+SOS_BROADCAST_RESPONSE_SECONDS = int(os.getenv('SOS_BROADCAST_RESPONSE_SECONDS', '6000'))
+OFFER_REMINDER_MINUTES_BEFORE = int(os.getenv('OFFER_REMINDER_MINUTES_BEFORE', '2'))
+
+# Client cancel penalties (% of order services total)
+CLIENT_CANCEL_ACCEPTED_GRACE_MINUTES = int(os.getenv('CLIENT_CANCEL_ACCEPTED_GRACE_MINUTES', '10'))
+CLIENT_CANCEL_ACCEPTED_PENALTY_PERCENT = int(os.getenv('CLIENT_CANCEL_ACCEPTED_PENALTY_PERCENT', '10'))
+CLIENT_CANCEL_ON_THE_WAY_PENALTY_PERCENT = int(os.getenv('CLIENT_CANCEL_ON_THE_WAY_PENALTY_PERCENT', '15'))
+CLIENT_CANCEL_ON_THE_WAY_FREE_HOURS = int(os.getenv('CLIENT_CANCEL_ON_THE_WAY_FREE_HOURS', '2'))
+CLIENT_CANCEL_ARRIVED_PENALTY_PERCENT = int(os.getenv('CLIENT_CANCEL_ARRIVED_PENALTY_PERCENT', '25'))
+
+# Payments polling/expiry
+PAYMENT_PENDING_EXPIRE_MINUTES = int(os.getenv('PAYMENT_PENDING_EXPIRE_MINUTES', '1'))
+
+# Celery beat schedule (minute check)
+CELERY_BEAT_SCHEDULE = {
+    'expire_stale_master_offers_every_minute': {
+        'task': 'apps.order.tasks.expire_stale_master_offers',
+        'schedule': 60.0,
+    },
+    'check_pending_payments_every_5s': {
+        'task': 'apps.accounts.tasks.check_pending_payments',
+        'schedule': 5.0,
+    },
+}
+
 
 # Static files (CSS, JavaScript, Images)
 # https://docs.djangoproject.com/en/5.2/howto/static-files/
@@ -165,6 +271,24 @@ STATIC_ROOT = os.path.join(BASE_DIR, 'staticfiles')
 MEDIA_URL = "/media/"
 # Production uchun /var/www/media, development uchun local media folder
 MEDIA_ROOT = os.getenv('MEDIA_ROOT', '/var/www/media')
+
+# Logging (show push/celery debug in terminal)
+LOGGING = {
+    "version": 1,
+    "disable_existing_loggers": False,
+    "formatters": {
+        "simple": {"format": "%(levelname)s %(name)s: %(message)s"},
+    },
+    "handlers": {
+        "console": {"class": "logging.StreamHandler", "formatter": "simple"},
+    },
+    "loggers": {
+        # Our push + payment polling diagnostics
+        "apps.accounts.push": {"handlers": ["console"], "level": os.getenv("PUSH_LOG_LEVEL", "INFO"), "propagate": False},
+        "apps.accounts.tasks": {"handlers": ["console"], "level": os.getenv("PUSH_LOG_LEVEL", "INFO"), "propagate": False},
+    },
+    "root": {"handlers": ["console"], "level": os.getenv("DJANGO_LOG_LEVEL", "WARNING")},
+}
 
 
 LOCALE_PATHS = [
@@ -307,7 +431,7 @@ ALFA_TEMPLATES_DETAILS_PASSWORD = os.getenv('ALFA_TEMPLATES_DETAILS_PASSWORD', '
 # Alfa acquiring (dynamic orders): return/fail URLs for register.do
 ALFA_RETURN_URL = os.getenv('ALFA_RETURN_URL', 'https://example.com/pay/success').strip()
 ALFA_FAIL_URL = os.getenv('ALFA_FAIL_URL', 'https://example.com/pay/fail').strip()
-ALFA_SESSION_TIMEOUT_SECS = int(os.getenv('ALFA_SESSION_TIMEOUT_SECS', '900'))
+ALFA_SESSION_TIMEOUT_SECS = int(os.getenv('ALFA_SESSION_TIMEOUT_SECS', '60'))
 
 # Автозаполнение для POST .../sbp-gateway/templates/create/ (только price)
 SBP_GATEWAY_TEMPLATE_QR_WIDTH = int(os.getenv('SBP_GATEWAY_TEMPLATE_QR_WIDTH', '300'))
@@ -359,8 +483,17 @@ SPECTACULAR_SETTINGS = {
         {'name': 'Authentication', 'description': 'User authentication and authorization'},
         {'name': 'Cars', 'description': 'Car management endpoints'},
         {'name': 'Masters', 'description': 'Master/service provider endpoints'},
-        {'name': 'Orders (Driver)', 'description': 'Order endpoints for Driver (client)'},
-        {'name': 'Orders (Master)', 'description': 'Order endpoints for Master (service provider)'},
+        {'name': 'Orders (Driver) · SOS & scheduled', 'description': 'Driver: create SOS and scheduled (by date) orders'},
+        {'name': 'Orders (Driver) · Time slots', 'description': 'Driver: free/busy time slots for booking a master'},
+        {'name': 'Orders (Driver) · CRUD & list', 'description': 'Driver: list orders, get/update/delete a single order'},
+        {'name': 'Orders (Driver) · My orders', 'description': 'Driver: current user’s orders (filters, pagination)'},
+        {'name': 'Orders (Driver) · Services', 'description': 'Driver: master price list, add line items to an order'},
+        {'name': 'Orders (Driver) · Reviews', 'description': 'Driver: post-review after a completed order'},
+        {'name': 'Orders (Master) · Available', 'description': 'Master: unassigned orders near the master (pool / discovery)'},
+        {'name': 'Orders (Master) · My orders', 'description': 'Master: current master’s jobs (filters, geo, work/archive)'},
+        {'name': 'Orders (Master) · Workflow', 'description': 'Master: set status, accept, complete (with payment intent)'},
+        {'name': 'Orders (Master) · Payment', 'description': 'Master: re-issue client payment (new formUrl) after completion'},
+        {'name': 'Orders (Master) · Team', 'description': 'Master: assign additional masters to the same order'},
         {'name': 'Categories', 'description': 'Category management endpoints'},
         {'name': 'Payments', 'description': 'Balance top-up via SBP QR'},
     ],

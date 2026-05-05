@@ -2,7 +2,35 @@ from django.contrib import admin
 from django.utils.html import format_html
 from django.urls import reverse
 from django.utils.safestring import mark_safe
-from .models import Order, OrderStatus, OrderPriority, OrderType, ScheduledOrder, SOSOrder, OrderService, Review, UserRating
+from .models import (
+    Order,
+    OrderStatus,
+    OrderPriority,
+    OrderType,
+    ScheduledOrder,
+    SOSOrder,
+    OrderService,
+    Review,
+    UserRating,
+    MasterOrderCancellation,
+    OrderWorkCompletionImage,
+)
+
+
+class OrderServiceInline(admin.TabularInline):
+    model = OrderService
+    extra = 0
+    autocomplete_fields = ['master_service_item']
+    readonly_fields = ('id', 'created_at')
+    fields = ('id', 'master_service_item', 'created_at')
+
+
+class ReviewInline(admin.StackedInline):
+    model = Review
+    extra = 0
+    can_delete = False
+    readonly_fields = ('id', 'reviewer', 'created_at', 'updated_at')
+    fields = ('id', 'reviewer', 'rating', 'tag', 'comment', 'created_at', 'updated_at')
 
 
 class BaseOrderAdmin(admin.ModelAdmin):
@@ -12,6 +40,7 @@ class BaseOrderAdmin(admin.ModelAdmin):
     list_max_show_all = 100
     readonly_fields = ['id', 'created_at', 'updated_at', 'user_link', 'master_link', 'order_type']
     filter_horizontal = ['masters', 'car', 'category']
+    inlines = [OrderServiceInline, ReviewInline]
     
     search_fields = [
         'id', 'text', 'location', 'user__first_name', 'user__last_name', 
@@ -39,11 +68,14 @@ class BaseOrderAdmin(admin.ModelAdmin):
     def status_badge(self, obj):
         """Статус с цветовой индикацией"""
         colors = {
-            OrderStatus.PENDING: '#ffc107',      # Желтый
-            OrderStatus.IN_PROGRESS: '#17a2b8',  # Синий
-            OrderStatus.COMPLETED: '#28a745',    # Зеленый
-            OrderStatus.CANCELLED: '#6c757d',    # Серый
-            OrderStatus.REJECTED: '#dc3545',     # Красный
+            OrderStatus.PENDING: '#ffc107',
+            OrderStatus.ACCEPTED: '#fd7e14',
+            OrderStatus.ON_THE_WAY: '#20c997',
+            OrderStatus.ARRIVED: '#6f42c1',
+            OrderStatus.IN_PROGRESS: '#17a2b8',
+            OrderStatus.COMPLETED: '#28a745',
+            OrderStatus.CANCELLED: '#6c757d',
+            OrderStatus.REJECTED: '#dc3545',
         }
         color = colors.get(obj.status, '#6c757d')
         return format_html(
@@ -239,6 +271,10 @@ class OrderServiceAdmin(admin.ModelAdmin):
     ]
     readonly_fields = ['id', 'created_at']
     list_per_page = 25
+
+    def has_module_permission(self, request):
+        """Скрываем из меню (управляется inline в Order)."""
+        return False
     
     def order_link(self, obj):
         """Ссылка на заказ"""
@@ -287,6 +323,10 @@ class ReviewAdmin(admin.ModelAdmin):
     search_fields = ['order__id', 'reviewer__email', 'reviewer__first_name', 'reviewer__last_name', 'comment']
     readonly_fields = ['id', 'created_at', 'updated_at']
     list_per_page = 25
+
+    def has_module_permission(self, request):
+        """Скрываем из меню (управляется inline в Order)."""
+        return False
     
     fieldsets = (
         ('Основная информация', {
@@ -379,6 +419,21 @@ class UserRatingAdmin(admin.ModelAdmin):
     def get_queryset(self, request):
         """Оптимизация запросов"""
         return super().get_queryset(request).select_related('user')
+
+
+@admin.register(MasterOrderCancellation)
+class MasterOrderCancellationAdmin(admin.ModelAdmin):
+    list_display = ['id', 'order_id', 'master_user', 'reason', 'created_at']
+    list_filter = ['reason', 'created_at']
+    search_fields = ['order__id', 'master_user__email']
+    readonly_fields = ['created_at']
+
+
+@admin.register(OrderWorkCompletionImage)
+class OrderWorkCompletionImageAdmin(admin.ModelAdmin):
+    list_display = ['id', 'order', 'image', 'created_at']
+    list_filter = ['created_at']
+    readonly_fields = ['created_at']
 
 
 # Дополнительные настройки админки

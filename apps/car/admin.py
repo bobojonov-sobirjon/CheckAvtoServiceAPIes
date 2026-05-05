@@ -41,3 +41,7 @@ class CarAdmin(admin.ModelAdmin):
         if db_field.name == 'category':
             kwargs['queryset'] = Category.objects.filter(type_category='by_car')
         return super().formfield_for_foreignkey(db_field, request, **kwargs)
+
+    def has_module_permission(self, request):
+        """Скрываем из меню (управляется inline в Driver)."""
+        return False

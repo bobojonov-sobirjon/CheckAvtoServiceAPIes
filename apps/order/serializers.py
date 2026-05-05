@@ -40,6 +40,8 @@ class OrderSerializer(serializers.ModelSerializer):
     reviews = serializers.SerializerMethodField()
     average_rating = serializers.SerializerMethodField()
     payment = serializers.SerializerMethodField()
+    room_id = serializers.IntegerField(source='chat_room_id', read_only=True)
+    completion_pin = serializers.SerializerMethodField(read_only=True)
 
     class Meta:
         model = Order
@@ -49,7 +51,9 @@ class OrderSerializer(serializers.ModelSerializer):
             'text', 'status', 'status_display', 'priority', 'priority_display',
             'location', 'latitude', 'longitude', 'master', 'masters',
             'scheduled_date', 'scheduled_time_start', 'scheduled_time_end',
-            'discount', 'services', 'reviews', 'average_rating', 'payment',
+            'accepted_at', 'on_the_way_started_at', 'arrived_at',
+            'discount', 'services', 'reviews', 'average_rating', 'payment', 'room_id',
+            'completion_pin',
             'created_at', 'updated_at'
         ]
         read_only_fields = ['id', 'created_at', 'updated_at']
@@ -62,6 +66,7 @@ class OrderSerializer(serializers.ModelSerializer):
     
     def get_masters(self, obj):
         """Получить список назначенных мастеров (пользователей)"""
+        req = self.context.get('request')
         masters = obj.masters.all()
         return [
             {
@@ -70,10 +75,21 @@ class OrderSerializer(serializers.ModelSerializer):
                 'full_name': user.get_full_name(),
                 'phone_number': user.phone_number,
                 'email': user.email,
-                'avatar': self.context['request'].build_absolute_uri(user.avatar.url) if user.avatar and self.context.get('request') else None
+                'avatar': req.build_absolute_uri(user.avatar.url) if req and user.avatar else None
             }
             for user in masters
         ]
+
+    def get_completion_pin(self, obj):
+        """PIN только владельцу заказа и только в статусе «в работе»."""
+        req = self.context.get('request')
+        if not req or not getattr(req.user, 'is_authenticated', False):
+            return None
+        if obj.user_id != req.user.id:
+            return None
+        if obj.status != OrderStatus.IN_PROGRESS:
+            return None
+        return obj.completion_pin or None
     
     def get_car_data(self, obj):
         return CarSerializer(obj.car, many=True, context=self.context).data
@@ -371,14 +387,21 @@ class OrderCreateSerializer(serializers.ModelSerializer):
                 raise serializers.ValidationError({
                     'scheduled_time_start': 'Время начала должно быть меньше времени окончания'
                 })
+
+            from apps.order.workflow import assert_booking_date_allowed_for_master
+
+            m_obj = Master.objects.get(id=master_id)
+            ok, err_msg = assert_booking_date_allowed_for_master(
+                master_user_id=m_obj.user_id,
+                booking_date=attrs.get('scheduled_date'),
+            )
+            if not ok:
+                raise serializers.ValidationError({'scheduled_date': err_msg})
         
         # Валидация для SOS заказов
         elif order_type == OrderType.SOS:
-            # Для SOS обязательны: master_id и priority
-            if not master_id:
-                raise serializers.ValidationError({
-                    'master_id': 'Для SOS заказа необходимо указать мастера'
-                })
+            # Для SOS обязательны: priority.
+            # master_id может быть пустым — тогда заказ будет "broadcast" ближайшим мастерам.
             
             # Проверяем, что priority указан
             if not attrs.get('priority'):
@@ -452,7 +475,7 @@ class OrderCreateSerializer(serializers.ModelSerializer):
         category_list = validated_data.pop('category_list', [])
         masters_list = validated_data.pop('masters_list', [])
         
-        # Устанавливаем мастера, если указан
+        # Устанавливаем мастера, если указан (direct assignment)
         if master_id:
             validated_data['master'] = Master.objects.get(id=master_id)
         

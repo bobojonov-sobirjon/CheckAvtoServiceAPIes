@@ -1,5 +1,5 @@
 from django.urls import path
-from . import views
+from .api import views
 
 app_name = 'order'
 
@@ -26,11 +26,17 @@ urlpatterns = [
     path('by-user/', views.OrdersByUserView.as_view(), name='orders-by-user'),
     path('by-master/', views.OrdersByMasterView.as_view(), name='orders-by-master'),
     path('available/', views.AvailableOrdersForMasterView.as_view(), name='available-orders'),
+    path('incoming-sync/', views.IncomingOrdersSyncView.as_view(), name='incoming-sync'),
     
     # Order status management
     path('<int:order_id>/status/', views.UpdateOrderStatusView.as_view(), name='update-status'),
     path('<int:order_id>/accept/', views.AcceptOrderView.as_view(), name='accept-order'),
+    path('<int:order_id>/decline/', views.DeclineOrderView.as_view(), name='decline-order'),
     path('<int:order_id>/complete/', views.CompleteOrderView.as_view(), name='complete-order'),
+    path('<int:order_id>/workflow/', views.AdvanceOrderWorkflowView.as_view(), name='order-workflow'),
+    path('<int:order_id>/work-completion-images/', views.OrderWorkCompletionImagesView.as_view(), name='order-work-completion-images'),
+    path('<int:order_id>/cancel/', views.ClientCancelOrderView.as_view(), name='order-client-cancel'),
+    path('<int:order_id>/master-cancel/', views.MasterCancelAfterAcceptView.as_view(), name='order-master-cancel'),
     path('<int:order_id>/payment/resend/', views.ResendOrderPaymentView.as_view(), name='resend-order-payment'),
     
     # Review endpoints (replaces old Rating API)

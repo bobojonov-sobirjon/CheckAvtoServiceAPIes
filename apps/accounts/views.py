@@ -4,6 +4,7 @@ from decimal import Decimal, ROUND_HALF_UP
 from zoneinfo import ZoneInfo
 
 from django.conf import settings
+from django.db import transaction
 from django.utils import timezone
 from rest_framework.views import APIView
 from rest_framework.permissions import AllowAny, IsAuthenticated
@@ -27,11 +28,18 @@ from .serializers import (
     SbpWebhookSerializer,
     SbpConfirmByTrxSerializer,
     AlfaOrderStatusExtendedSerializer,
+    OwnerTopUpMasterBalanceSerializer,
+    MasterWithdrawSerializer,
 )
 from .services import SMSService
 from .models import CustomUser, FAQ, SbpPaymentIntent, UserBalance, AlfaSbpTemplateSnapshot
+from .models import PaymentTransaction, PaymentKind, PaymentStatus
+from .models import UserDevice
+from .models import MasterAvailableBalance, MasterWithdrawalRequest, MasterWithdrawalStatus
+from apps.order.permissions import IsMaster
 from .sbp_qr import pay_url_to_qr_png_base64
 from .alfa_orders import post_order_status_extended, is_paid_status
+from .alfa_orders import register_order
 from .alfa_sbp_templates import (
     post_template_json,
     alfa_sbp_templates_configured,
@@ -225,6 +233,103 @@ class CheckSMSCodeView(APIView):
                 'success': False,
                 'error': result['error']
             }, status=result['status_code'])
+
+
+class UserDeviceListCreateView(APIView):
+    """
+    User device tokenlar: create va shu usernikilarni list qilish.
+    """
+    permission_classes = [IsAuthenticated]
+
+    @extend_schema(
+        summary='User Device: список устройств',
+        description='Возвращает список device-токенов текущего пользователя (для push-уведомлений).',
+        tags=['User Device'],
+        responses={200: {"type": "array", "items": {"type": "object"}}},
+    )
+    def get(self, request):
+        from .serializers import UserDeviceSerializer
+        qs = UserDevice.objects.filter(user=request.user).order_by('-updated_at')
+        return Response(UserDeviceSerializer(qs, many=True).data)
+
+    @extend_schema(
+        summary='User Device: добавить/обновить устройство',
+        description='Создаёт устройство или обновляет существующее по паре (user, device_token).',
+        tags=['User Device'],
+        request={"application/json": {"type": "object"}},
+        responses={201: {"type": "object"}, 400: {"type": "object"}},
+    )
+    def post(self, request):
+        from .serializers import UserDeviceSerializer
+        serializer = UserDeviceSerializer(data=request.data, context={'request': request})
+        if not serializer.is_valid():
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        obj = UserDevice.objects.update_or_create(
+            user=request.user,
+            device_token=serializer.validated_data['device_token'],
+            defaults={
+                'device_type': serializer.validated_data.get('device_type') or UserDevice.DEVICE_ANDROID,
+                'is_active': serializer.validated_data.get('is_active', True),
+            },
+        )[0]
+        return Response(UserDeviceSerializer(obj).data, status=status.HTTP_201_CREATED)
+
+
+class UserDeviceDetailView(APIView):
+    """
+    PUT update (full update) va PATCH is_active toggle.
+    """
+    permission_classes = [IsAuthenticated]
+
+    @extend_schema(
+        summary='User Device: to‘liq update (PUT)',
+        description='device_token/device_type/is_active ni to‘liq yangilaydi (faqat o‘z device’ingiz).',
+        tags=['User Device'],
+        request={"application/json": {"type": "object"}},
+        responses={200: {"type": "object"}, 400: {"type": "object"}, 404: {"type": "object"}},
+    )
+    def put(self, request, device_id: int):
+        from .serializers import UserDeviceSerializer
+        try:
+            obj = UserDevice.objects.get(id=device_id, user=request.user)
+        except UserDevice.DoesNotExist:
+            return Response({'error': 'Device not found'}, status=status.HTTP_404_NOT_FOUND)
+
+        serializer = UserDeviceSerializer(obj, data=request.data, partial=False, context={'request': request})
+        if not serializer.is_valid():
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+        obj.device_token = serializer.validated_data['device_token']
+        obj.device_type = serializer.validated_data.get('device_type') or obj.device_type
+        obj.is_active = serializer.validated_data.get('is_active', obj.is_active)
+        obj.save(update_fields=['device_token', 'device_type', 'is_active', 'updated_at'])
+        return Response(UserDeviceSerializer(obj).data)
+
+    @extend_schema(
+        summary='User Device: faollikni o‘zgartirish (PATCH)',
+        description='Faqat `is_active` maydonini true/false qilib o‘zgartiradi.',
+        tags=['User Device'],
+        request={"application/json": {"type": "object", "properties": {"is_active": {"type": "boolean"}}}},
+        responses={200: {"type": "object"}, 400: {"type": "object"}, 404: {"type": "object"}},
+    )
+    def patch(self, request, device_id: int):
+        try:
+            obj = UserDevice.objects.get(id=device_id, user=request.user)
+        except UserDevice.DoesNotExist:
+            return Response({'error': 'Device not found'}, status=status.HTTP_404_NOT_FOUND)
+
+        is_active = request.data.get('is_active')
+        if is_active is None:
+            return Response({'error': 'is_active is required'}, status=status.HTTP_400_BAD_REQUEST)
+        if isinstance(is_active, bool):
+            obj.is_active = is_active
+        elif isinstance(is_active, str):
+            obj.is_active = is_active.strip().lower() in ['1', 'true', 'yes', 'y', 'on']
+        else:
+            obj.is_active = bool(is_active)
+        obj.save(update_fields=['is_active', 'updated_at'])
+        from .serializers import UserDeviceSerializer
+        return Response(UserDeviceSerializer(obj).data)
 
 
 class SMSServiceStatusView(APIView):
@@ -652,7 +757,43 @@ def _sync_order_payment_paid(intent) -> None:
     from django.apps import apps
 
     Order = apps.get_model('order', 'Order')
-    Order.objects.filter(sbp_payment_intent_id=intent.pk).update(payment_status='paid')
+    orders = list(Order.objects.filter(sbp_payment_intent_id=intent.pk).select_related('master'))
+    Order.objects.filter(id__in=[o.id for o in orders]).update(payment_status='paid')
+
+    try:
+        from apps.accounts.master_payouts import credit_master_when_order_paid
+
+        credit_master_when_order_paid(intent)
+    except Exception:
+        pass
+
+    # push -> order owner and master
+    try:
+        from apps.accounts.push import send_push_to_user
+    except Exception:
+        send_push_to_user = None
+
+    if send_push_to_user:
+        for order in orders:
+            try:
+                send_push_to_user(
+                    user=order.user,
+                    title='Оплата прошла успешно',
+                    body=f'Заказ №{order.id}: оплата подтверждена. Спасибо!',
+                    data={'type': 'order_payment_paid', 'order_id': str(order.id)},
+                )
+            except Exception:
+                pass
+            try:
+                if order.master and getattr(order.master, 'user', None):
+                    send_push_to_user(
+                        user=order.master.user,
+                        title='Оплата подтверждена',
+                        body=f'Заказ №{order.id}: клиент оплатил заказ. Оплата подтверждена.',
+                        data={'type': 'order_payment_paid', 'order_id': str(order.id)},
+                    )
+            except Exception:
+                pass
 
 
 def _sbp_webhook_secret(request) -> str:
@@ -930,8 +1071,215 @@ class AlfaGetOrderStatusExtendedView(APIView):
                 result['intent_update']['status'] = obj.status
             if code in ('ok', 'already_completed'):
                 _sync_order_payment_paid(obj)
+                # If Owner is checking a master top-up — notify owner too (best-effort).
+                try:
+                    if request.user and request.user.is_authenticated and request.user.groups.filter(name='Owner').exists():
+                        if obj and obj.user_id != request.user.id:
+                            from apps.accounts.push import send_push_to_user
+                            send_push_to_user(
+                                user=request.user,
+                                title='Пополнение выполнено',
+                                body='Оплата прошла успешно. Баланс мастера пополнен.',
+                                data={'type': 'master_balance_topup_paid', 'intent_id': str(obj.id)},
+                            )
+                except Exception:
+                    pass
 
         return Response(result, status=status.HTTP_200_OK)
+
+
+class OwnerTopUpMasterBalanceView(APIView):
+    """
+    Owner: открыть оплату (Alfa dynamic formUrl) для пополнения баланса мастера.
+    """
+
+    permission_classes = [IsAuthenticated]
+
+    @extend_schema(
+        summary='Owner: пополнить баланс мастера (Alfa dynamic)',
+        tags=['Owner Balance Top Up'],
+        request=OwnerTopUpMasterBalanceSerializer,
+        responses={200: {'type': 'object'}, 400: {'type': 'object'}, 403: {'type': 'object'}, 404: {'type': 'object'}},
+    )
+    def post(self, request):
+        # Only Owner
+        if not request.user.groups.filter(name='Owner').exists():
+            return Response({'success': False, 'error': 'Доступно только для роли Owner.'}, status=status.HTTP_403_FORBIDDEN)
+
+        ser = OwnerTopUpMasterBalanceSerializer(data=request.data)
+        if not ser.is_valid():
+            return Response({'success': False, 'errors': ser.errors}, status=status.HTTP_400_BAD_REQUEST)
+
+        master_id = ser.validated_data['master_id']
+        price = ser.validated_data['price']
+
+        from apps.master.models import Master
+        try:
+            master = Master.objects.select_related('user').get(id=master_id)
+        except Master.DoesNotExist:
+            return Response({'success': False, 'error': 'Мастер не найден.'}, status=status.HTTP_404_NOT_FOUND)
+
+        # Create intent for master user (balance will be topped up for master)
+        intent = SbpPaymentIntent.objects.create(
+            user=master.user,
+            amount=price,
+            status=SbpPaymentIntent.STATUS_PENDING,
+        )
+
+        # Create Alfa dynamic order
+        from django.conf import settings as dj_settings
+        order_number = f'mtopup-{str(intent.id).replace("-", "")[:24]}'
+        gw = register_order(
+            order_number=order_number,
+            amount_kopecks=int(price * Decimal('100')),
+            description=f'Пополнение баланса мастера #{master.id}',
+            return_url=getattr(dj_settings, 'ALFA_RETURN_URL', ''),
+            fail_url=getattr(dj_settings, 'ALFA_FAIL_URL', ''),
+            session_timeout_secs=getattr(dj_settings, 'ALFA_SESSION_TIMEOUT_SECS', 900),
+        )
+        if gw.get('error') or str(gw.get('errorCode', '0')) not in ('0', '00', 0):
+            return Response({'success': False, 'error': 'Alfa register.do failed', 'gateway': gw}, status=status.HTTP_502_BAD_GATEWAY)
+
+        alfa_order_id = str(gw.get('orderId') or '').strip()
+        form_url = str(gw.get('formUrl') or '').strip()
+
+        # track payment transaction
+        try:
+            PaymentTransaction.objects.update_or_create(
+                intent=intent,
+                defaults={
+                    'kind': PaymentKind.MASTER_TOPUP,
+                    'status': PaymentStatus.PENDING,
+                    'initiated_by': request.user,
+                    'beneficiary': master.user,
+                    'amount': price,
+                    'master': master,
+                    'alfa_order_id': alfa_order_id,
+                    'alfa_order_number': order_number,
+                    'form_url': form_url,
+                },
+            )
+        except Exception:
+            pass
+
+        return Response(
+            {
+                'success': True,
+                'message': 'Оплата создана. Перейдите по ссылке form_url и оплатите.',
+                'master_id': master.id,
+                'intent_id': str(intent.id),
+                'amount': str(price),
+                'alfa_order_id': alfa_order_id,
+                'alfa_order_number': order_number,
+                'form_url': form_url,
+                'check_payment_hint': {
+                    'endpoint': '/api/auth/balance/alfa-order-status/',
+                    'body': {
+                        'alfa_order_id': alfa_order_id,
+                        'alfa_order_number': order_number,
+                        'intent_id': str(intent.id),
+                        'amount': str(price),
+                    },
+                },
+            },
+            status=status.HTTP_200_OK,
+        )
+
+
+class MasterAvailableBalanceView(APIView):
+    """
+    Доступный баланс мастера: суммы с оплаченных заказов (отдельно от UserBalance).
+    """
+
+    permission_classes = [IsAuthenticated, IsMaster]
+
+    @extend_schema(
+        summary='Master: доступный баланс (вывод)',
+        description='Накопления после оплаты заказов клиентом. Заявки на вывод сразу уменьшают эту сумму.',
+        tags=['Master Payouts'],
+        responses={200: {'type': 'object', 'properties': {'available_amount': {'type': 'string'}}}},
+    )
+    def get(self, request):
+        bal = MasterAvailableBalance.get_or_create_for(request.user)
+        return Response({'available_amount': str(bal.amount)})
+
+
+class MasterWithdrawalCreateView(APIView):
+    """Мастер: создать заявку на вывод (сумма `price` сразу резервируется)."""
+
+    permission_classes = [IsAuthenticated, IsMaster]
+
+    @extend_schema(
+        summary='Master: заявка на вывод средств',
+        description=(
+            'Передайте `price`. Сумма списывается с доступного баланса сразу. '
+            'Админ в панели меняет статус: на рассмотрении → выплачено / отклонено. '
+            'При отклонении сумма возвращается на доступный баланс.'
+        ),
+        tags=['Master Payouts'],
+        request=MasterWithdrawSerializer,
+        responses={201: {'type': 'object'}, 400: {'type': 'object'}, 403: {'type': 'object'}},
+    )
+    def post(self, request):
+        ser = MasterWithdrawSerializer(data=request.data)
+        if not ser.is_valid():
+            return Response({'success': False, 'errors': ser.errors}, status=status.HTTP_400_BAD_REQUEST)
+
+        price = ser.validated_data['price']
+        try:
+            with transaction.atomic():
+                ok, err = MasterAvailableBalance.try_reserve_for_withdrawal(request.user, price)
+                if not ok:
+                    return Response({'success': False, 'error': err}, status=status.HTTP_400_BAD_REQUEST)
+                w = MasterWithdrawalRequest.objects.create(
+                    master_user=request.user,
+                    amount=price,
+                    status=MasterWithdrawalStatus.PENDING,
+                )
+        except Exception:
+            return Response(
+                {'success': False, 'error': 'Не удалось создать заявку. Попробуйте позже.'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+
+        bal = MasterAvailableBalance.get_or_create_for(request.user)
+        return Response(
+            {
+                'success': True,
+                'id': w.id,
+                'amount': str(w.amount),
+                'status': w.status,
+                'status_display': w.get_status_display(),
+                'available_amount': str(bal.amount),
+            },
+            status=status.HTTP_201_CREATED,
+        )
+
+
+class MasterWithdrawalListView(APIView):
+    """Мастер: список своих заявок на вывод."""
+
+    permission_classes = [IsAuthenticated, IsMaster]
+
+    @extend_schema(
+        summary='Master: мои заявки на вывод',
+        tags=['Master Payouts'],
+        responses={200: {'type': 'object'}},
+    )
+    def get(self, request):
+        qs = MasterWithdrawalRequest.objects.filter(master_user=request.user).order_by('-created_at')[:100]
+        results = [
+            {
+                'id': w.id,
+                'amount': str(w.amount),
+                'status': w.status,
+                'status_display': w.get_status_display(),
+                'created_at': w.created_at,
+                'updated_at': w.updated_at,
+            }
+            for w in qs
+        ]
+        return Response({'results': results})
 
 
 def _save_alfa_sbp_template_snapshot(user, gw: dict, generated: dict | None = None) -> None:

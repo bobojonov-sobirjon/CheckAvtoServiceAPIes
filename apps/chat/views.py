@@ -4,6 +4,8 @@ from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.pagination import PageNumberPagination
 from django.db.models import Q, Max
+from asgiref.sync import async_to_sync
+from channels.layers import get_channel_layer
 from drf_spectacular.utils import extend_schema, OpenApiParameter
 from drf_spectacular.types import OpenApiTypes
 
@@ -313,6 +315,17 @@ image: <file>
             
             # Обновляем время последнего обновления комнаты
             room.save()
+
+            # WS broadcast (REST upload → realtime)
+            try:
+                channel_layer = get_channel_layer()
+                payload = ChatMessageSerializer(message, context={'request': request}).data
+                async_to_sync(channel_layer.group_send)(
+                    f'chat_{room.id}',
+                    {'type': 'chat_message', 'message': payload},
+                )
+            except Exception:
+                pass
             
             result_serializer = ChatMessageSerializer(message, context={'request': request})
             return Response(result_serializer.data, status=status.HTTP_201_CREATED)

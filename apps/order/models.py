@@ -14,10 +14,21 @@ User = get_user_model()
 class OrderStatus(models.TextChoices):
     """Статусы заказа"""
     PENDING = 'pending', 'Ожидает'
+    ACCEPTED = 'accepted', 'Принят мастером'
+    ON_THE_WAY = 'on_the_way', 'В пути'
+    ARRIVED = 'arrived', 'Прибыл'
     IN_PROGRESS = 'in_progress', 'В работе'
     COMPLETED = 'completed', 'Завершен'
     CANCELLED = 'cancelled', 'Отменен'
     REJECTED = 'rejected', 'Отклонен'
+
+
+class MasterCancelReason(models.TextChoices):
+    """Причина отмены мастером после принятия (too_far запрещён в API)"""
+    CUSTOMER_NO_SHOW = 'customer_no_show', 'Клиент не вышел / не на месте'
+    VEHICLE_NOT_READY = 'vehicle_not_ready', 'Авто не готово к работе'
+    EMERGENCY = 'emergency', 'Форс-мажор'
+    OTHER = 'other', 'Другое'
     
 
 class OrderPriority(models.TextChoices):
@@ -115,6 +126,15 @@ class Order(models.Model):
         verbose_name='Мастера (пользователи)',
         help_text='Список пользователей-мастеров, назначенных на этот заказ'
     )
+
+    chat_room = models.OneToOneField(
+        'chat.ChatRoom',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='order',
+        verbose_name='Чат комната',
+    )
     
     # Поля для запланированных заказов (order_type=scheduled)
     scheduled_date = models.DateField(
@@ -185,11 +205,40 @@ class Order(models.Model):
         auto_now=True,
         verbose_name='Дата обновления'
     )
+    master_response_deadline = models.DateTimeField(
+        null=True,
+        blank=True,
+        verbose_name='Дедлайн ответа мастера',
+        help_text='Если мастер не ответит до этого времени, заказ автоматически отклоняется',
+        db_index=True,
+    )
     expiration_time = models.DateTimeField(
         null=True,
         blank=True,
         verbose_name='Время истечения',
         help_text='Время истечения заказа (1 день с момента создания)'
+    )
+    accepted_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        verbose_name='Принят мастером',
+    )
+    on_the_way_started_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        verbose_name='Выезд (в пути)',
+    )
+    arrived_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        verbose_name='Прибытие',
+    )
+    completion_pin = models.CharField(
+        max_length=8,
+        blank=True,
+        default='',
+        verbose_name='PIN завершения для клиента',
+        help_text='Генерируется при переходе в «в работе»; клиент вводит при complete',
     )
 
     class Meta:
@@ -524,3 +573,53 @@ class SOSOrder(Order):
         # SOS заказы всегда имеют высокий приоритет
         self.priority = OrderPriority.HIGH
         super().save(*args, **kwargs)
+
+
+class MasterOrderCancellation(models.Model):
+    """Отмена заказа мастером после принятия (для лимита горизонта записи)."""
+    master_user = models.ForeignKey(
+        User,
+        on_delete=models.CASCADE,
+        related_name='master_order_cancellations',
+        verbose_name='Мастер (пользователь)',
+    )
+    order = models.ForeignKey(
+        Order,
+        on_delete=models.CASCADE,
+        related_name='master_cancellations',
+        verbose_name='Заказ',
+    )
+    reason = models.CharField(
+        max_length=32,
+        choices=MasterCancelReason.choices,
+        verbose_name='Причина',
+    )
+    created_at = models.DateTimeField(auto_now_add=True, verbose_name='Дата')
+
+    class Meta:
+        verbose_name = 'Отмена заказа мастером'
+        verbose_name_plural = 'Отмены заказов мастерами'
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return f"#{self.order_id} by master user {self.master_user_id}"
+
+
+class OrderWorkCompletionImage(models.Model):
+    """Фото выполненной работы перед complete."""
+    order = models.ForeignKey(
+        Order,
+        on_delete=models.CASCADE,
+        related_name='work_completion_images',
+        verbose_name='Заказ',
+    )
+    image = models.ImageField(upload_to='order_work_completion/', verbose_name='Фото')
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        verbose_name = 'Фото завершения работы'
+        verbose_name_plural = 'Фото завершения работы'
+        ordering = ['created_at']
+
+    def __str__(self):
+        return f"Order #{self.order_id} image {self.pk}"

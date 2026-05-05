@@ -35,15 +35,15 @@ class ChatMessageSerializer(serializers.ModelSerializer):
         read_only_fields = ['id', 'sender', 'created_at']
     
     def get_sender_type(self, obj):
-        """Определить тип отправителя относительно текущего пользователя"""
+        """
+        Asosiy qoida: sender_type current user'ga nisbatan.
+        - agar message.sender == request.user → initiator (ya'ni "men yubordim")
+        - aks holda → receiver (ya'ni "u yubordi")
+        """
         request = self.context.get('request')
-        if request and request.user:
-            # Если message sender == request user, то initiator (сам написал)
-            # Иначе receiver (кто-то другой написал)
-            if obj.sender == request.user:
-                return 'initiator'
-            return 'receiver'
-        # Если нет request (WebSocket), то sender всегда initiator
+        if request and getattr(request, 'user', None) and getattr(request.user, 'is_authenticated', False):
+            return 'initiator' if obj.sender_id == request.user.id else 'receiver'
+        # request yo‘q bo‘lsa (masalan WS’da serializer ishlatilmasa) — default
         return 'initiator'
     
     def get_file_url(self, obj):

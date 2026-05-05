@@ -1,6 +1,7 @@
 from django.contrib import admin, messages
 from django.contrib.auth.admin import UserAdmin
 from django.contrib.sites.models import Site
+from django.utils import timezone
 from .models import (
     CustomUser,
     MasterCustomUser,
@@ -10,7 +11,15 @@ from .models import (
     UserSMSCode,
     FAQ,
     SbpPaymentIntent,
+    UserDevice,
+    PaymentTransaction,
+    MasterAvailableBalance,
+    MasterOrderEarningCredit,
+    MasterWithdrawalRequest,
+    MasterWithdrawalStatus,
 )
+from apps.car.models import Car
+from apps.categories.models import Category as CategoriesCategory
 
 
 class UserBalanceInline(admin.StackedInline):
@@ -31,6 +40,35 @@ class UserSMSCodeInline(admin.TabularInline):
     max_num = 0  # Display only, no editing
 
 
+class UserDeviceInline(admin.TabularInline):
+    """Inline для устройств пользователя (FCM tokens)"""
+    model = UserDevice
+    extra = 0
+    fields = ('device_type', 'device_token', 'is_active', 'created_at', 'updated_at')
+    readonly_fields = ('created_at', 'updated_at')
+
+
+class SbpPaymentIntentInline(admin.TabularInline):
+    """Inline для СБП intent-ов пользователя"""
+    model = SbpPaymentIntent
+    extra = 0
+    fields = ('id', 'amount', 'status', 'created_at', 'completed_at', 'bank_reference')
+    readonly_fields = ('id', 'created_at', 'completed_at')
+
+
+class CarInline(admin.TabularInline):
+    """Inline для машин пользователя (только для Driver)"""
+    model = Car
+    extra = 0
+    fields = ('brand', 'model', 'category', 'year', 'created_at', 'updated_at')
+    readonly_fields = ('created_at', 'updated_at')
+    
+    def formfield_for_foreignkey(self, db_field, request, **kwargs):
+        if db_field.name == 'category':
+            kwargs['queryset'] = CategoriesCategory.objects.filter(type_category='by_car')
+        return super().formfield_for_foreignkey(db_field, request, **kwargs)
+
+
 @admin.register(CustomUser)
 class CustomUserAdmin(UserAdmin):
     """
@@ -45,7 +83,7 @@ class CustomUserAdmin(UserAdmin):
     list_filter = ('groups', 'is_verified', 'is_staff', 'is_superuser', 'is_active', 'created_at')
     search_fields = ('email', 'username', 'first_name', 'last_name', 'phone_number', 'private_id')
     ordering = ('-created_at',)
-    inlines = [UserBalanceInline, UserSMSCodeInline]
+    inlines = [UserBalanceInline, UserDeviceInline, UserSMSCodeInline]
     
     fieldsets = (
         (None, {'fields': ('username', 'password')}),
@@ -84,12 +122,11 @@ class MasterCustomUserAdmin(UserAdmin):
     list_filter = ('is_verified', 'is_staff', 'is_active', 'created_at')
     search_fields = ('email', 'username', 'first_name', 'last_name', 'phone_number')
     ordering = ('-created_at',)
-    inlines = [UserBalanceInline, UserSMSCodeInline]
+    inlines = [UserDeviceInline, UserSMSCodeInline]
     
     fieldsets = (
         (None, {'fields': ('username', 'password')}),
         ('Личная информация', {'fields': ('private_id', 'first_name', 'last_name', 'email', 'phone_number', 'date_of_birth', 'avatar', 'description')}),
-        ('Права доступа', {'fields': ('is_active', 'is_staff', 'is_superuser', 'groups')}),
         ('Важные даты', {'fields': ('last_login', 'date_joined', 'created_at', 'updated_at')}),
         ('Подтверждение', {'fields': ('is_verified',)}),
     )
@@ -123,12 +160,12 @@ class CarOwnerAdmin(UserAdmin):
     list_filter = ('is_verified', 'is_staff', 'is_active', 'created_at')
     search_fields = ('email', 'username', 'first_name', 'last_name', 'phone_number')
     ordering = ('-created_at',)
-    inlines = [UserBalanceInline, UserSMSCodeInline]
+    # Driver: show cars + SBP intents inline here
+    inlines = [UserDeviceInline, CarInline, SbpPaymentIntentInline, UserSMSCodeInline]
     
     fieldsets = (
         (None, {'fields': ('username', 'password')}),
         ('Личная информация', {'fields': ('first_name', 'last_name', 'email', 'phone_number', 'date_of_birth', 'avatar', 'description')}),
-        ('Права доступа', {'fields': ('is_active', 'is_staff', 'is_superuser', 'groups')}),
         ('Важные даты', {'fields': ('last_login', 'date_joined', 'created_at', 'updated_at')}),
         ('Подтверждение', {'fields': ('is_verified',)}),
     )
@@ -162,12 +199,12 @@ class OwnerAdmin(UserAdmin):
     list_filter = ('is_verified', 'is_staff', 'is_active', 'created_at')
     search_fields = ('email', 'username', 'first_name', 'last_name', 'phone_number')
     ordering = ('-created_at',)
-    inlines = [UserBalanceInline, UserSMSCodeInline]
+    # Owner: show SBP intents inline here
+    inlines = [UserBalanceInline, UserDeviceInline, SbpPaymentIntentInline, UserSMSCodeInline]
     
     fieldsets = (
         (None, {'fields': ('username', 'password')}),
         ('Личная информация', {'fields': ('private_id', 'first_name', 'last_name', 'email', 'phone_number', 'date_of_birth', 'avatar', 'description')}),
-        ('Права доступа', {'fields': ('is_active', 'is_staff', 'is_superuser', 'groups')}),
         ('Важные даты', {'fields': ('last_login', 'date_joined', 'created_at', 'updated_at')}),
         ('Подтверждение', {'fields': ('is_verified',)}),
     )
@@ -197,6 +234,57 @@ class UserBalanceAdmin(admin.ModelAdmin):
     )
 
 
+@admin.register(MasterAvailableBalance)
+class MasterAvailableBalanceAdmin(admin.ModelAdmin):
+    list_display = ('user', 'amount', 'updated_at')
+    search_fields = ('user__email', 'user__first_name', 'user__last_name')
+    readonly_fields = ('updated_at',)
+
+
+@admin.register(MasterOrderEarningCredit)
+class MasterOrderEarningCreditAdmin(admin.ModelAdmin):
+    list_display = ('id', 'order', 'master_user', 'amount', 'created_at')
+    list_filter = ('created_at',)
+    search_fields = ('order__id', 'master_user__email')
+    readonly_fields = ('order', 'master_user', 'amount', 'created_at')
+
+
+@admin.register(MasterWithdrawalRequest)
+class MasterWithdrawalRequestAdmin(admin.ModelAdmin):
+    """Заявки на вывод: при статусе «Отклонено» сумма возвращается на доступный баланс (один раз)."""
+
+    list_display = ('id', 'master_user', 'amount', 'status', 'refunded_at', 'completed_at', 'created_at')
+    list_filter = ('status', 'created_at')
+    search_fields = ('master_user__email', 'id')
+    readonly_fields = ('created_at', 'updated_at')
+
+    fieldsets = (
+        (None, {'fields': ('master_user', 'amount', 'status', 'admin_note')}),
+        ('Итог', {'fields': ('refunded_at', 'completed_at', 'created_at', 'updated_at')}),
+    )
+
+    def get_readonly_fields(self, request, obj=None):
+        ro = ['created_at', 'updated_at', 'refunded_at', 'completed_at']
+        if not obj:
+            return ro
+        if obj.status == MasterWithdrawalStatus.COMPLETED or obj.refunded_at:
+            ro.extend(['master_user', 'amount', 'status'])
+        return ro
+
+    def save_model(self, request, obj, form, change):
+        if change and obj.pk:
+            prev = MasterWithdrawalRequest.objects.filter(pk=obj.pk).first()
+            if prev:
+                old = prev.status
+                if old != obj.status:
+                    if obj.status == MasterWithdrawalStatus.REJECTED and not prev.refunded_at:
+                        MasterAvailableBalance.add_amount(obj.master_user, obj.amount)
+                        obj.refunded_at = timezone.now()
+                    elif obj.status == MasterWithdrawalStatus.COMPLETED and not prev.completed_at:
+                        obj.completed_at = timezone.now()
+        super().save_model(request, obj, form, change)
+
+
 # @admin.register(UserSMSCode)
 class UserSMSCodeAdmin(admin.ModelAdmin):
     """Админка для SMS кодов"""
@@ -222,6 +310,10 @@ class SbpPaymentIntentAdmin(admin.ModelAdmin):
     search_fields = ('id', 'user__email', 'user__username', 'bank_reference')
     readonly_fields = ('id', 'created_at', 'completed_at')
     actions = ('action_mark_paid',)
+    
+    def has_module_permission(self, request):
+        """Скрываем из меню (нужно только inline в Driver/Owner)."""
+        return False
 
     @admin.display(description='Реф. банка')
     def bank_reference_short(self, obj):
@@ -273,3 +365,51 @@ class FAQAdmin(admin.ModelAdmin):
 
 
 admin.site.unregister(Site)
+
+
+@admin.register(PaymentTransaction)
+class PaymentTransactionAdmin(admin.ModelAdmin):
+    """Админка для транзакций оплат (order / master top-up)."""
+
+    @admin.display(description='Intent ID')
+    def intent_id_text(self, obj):
+        return str(obj.intent_id) if obj.intent_id else '-'
+
+    list_display = (
+        'kind',
+        'status',
+        'amount',
+        'beneficiary',
+        'master',
+        'order',
+        'created_at',
+        'last_checked_at',
+    )
+    list_filter = ('kind', 'status', 'created_at')
+    search_fields = (
+        'id',
+        'alfa_order_id',
+        'alfa_order_number',
+        'intent__id',
+        'beneficiary__email',
+        'beneficiary__first_name',
+        'beneficiary__last_name',
+        'initiated_by__email',
+        'initiated_by__first_name',
+        'initiated_by__last_name',
+    )
+    ordering = ('-created_at',)
+    readonly_fields = ('intent_id_text', 'created_at', 'updated_at', 'last_checked_at', 'gateway_last_response')
+
+    fieldsets = (
+        ('Основное', {
+            'fields': ('kind', 'status', 'amount', 'initiated_by', 'beneficiary', 'master', 'order')
+        }),
+        ('Alfa acquiring', {
+            'fields': ('alfa_order_id', 'alfa_order_number', 'form_url', 'intent_id_text', 'intent')
+        }),
+        ('Диагностика', {
+            'fields': ('gateway_last_response', 'last_checked_at', 'created_at', 'updated_at'),
+            'classes': ('collapse',),
+        }),
+    )

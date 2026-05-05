@@ -1,5 +1,5 @@
 from django.urls import path
-from .views import (
+from .api.views import (
     LoginView, CheckSMSCodeView, SMSServiceStatusView,
     UserDetailsView, UserDetailsByIdView, FAQListView, UpdateTelegramChatIdView,
     HealthCheckView,
@@ -8,6 +8,12 @@ from .views import (
     SbpWebhookView,
     SbpConfirmByTrxView,
     AlfaGetOrderStatusExtendedView,
+    OwnerTopUpMasterBalanceView,
+    MasterAvailableBalanceView,
+    MasterWithdrawalCreateView,
+    MasterWithdrawalListView,
+    UserDeviceListCreateView,
+    UserDeviceDetailView,
 )
 
 urlpatterns = [
@@ -37,4 +43,12 @@ urlpatterns = [
     path('balance/sbp-webhook/', SbpWebhookView.as_view(), name='balance_sbp_webhook'),
     path('balance/sbp-confirm-by-trx/', SbpConfirmByTrxView.as_view(), name='balance_sbp_confirm_by_trx'),
     path('balance/alfa-order-status/', AlfaGetOrderStatusExtendedView.as_view(), name='balance_alfa_order_status'),
+    path('balance/master-topup/', OwnerTopUpMasterBalanceView.as_view(), name='balance_master_topup'),
+    path('balance/master-available/', MasterAvailableBalanceView.as_view(), name='balance_master_available'),
+    path('balance/master-withdraw/', MasterWithdrawalCreateView.as_view(), name='balance_master_withdraw'),
+    path('balance/master-withdrawals/', MasterWithdrawalListView.as_view(), name='balance_master_withdrawals'),
+
+    # Push devices
+    path('devices/', UserDeviceListCreateView.as_view(), name='user_devices'),
+    path('devices/<int:device_id>/', UserDeviceDetailView.as_view(), name='user_device_detail'),
 ]

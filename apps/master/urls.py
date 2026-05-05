@@ -1,5 +1,5 @@
 from django.urls import path
-from .views import (
+from .api.views import (
     MasterProfileView, MasterDetailsView, MasterListView,
     MasterEmployeeView, MasterFilterChoicesView, MastersByUserView,
     AddServiceItemsView, UpdateServiceItemView, DeleteServiceItemView,

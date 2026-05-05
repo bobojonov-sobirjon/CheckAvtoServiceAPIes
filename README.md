@@ -253,6 +253,67 @@ python manage.py migrate
 python manage.py collectstatic
 ```
 
+## Celery (фоновые задачи)
+
+Проект использует Celery для:
+- авто-истечения офферов мастера по заказам (deadline)
+- периодической проверки оплат (Alfa acquiring) и смены статуса транзакций
+
+## Chat (WebSocket)
+
+Документация по чату и WebSocket: `docs/CHAT.md`
+
+### Требования
+- **Redis** как broker/result backend (по умолчанию): `redis://localhost:6379/0`
+- Заполненные переменные Alfa (для проверки оплат), если используете payment polling
+
+### Переменные окружения (.env)
+Минимально:
+```env
+CELERY_BROKER_URL=redis://localhost:6379/0
+CELERY_RESULT_BACKEND=redis://localhost:6379/0
+```
+
+Опционально:
+```env
+PAYMENT_PENDING_EXPIRE_MINUTES=1
+MASTER_OFFER_RESPONSE_MINUTES=15
+SOS_BROADCAST_RESPONSE_SECONDS=120
+OFFER_REMINDER_MINUTES_BEFORE=2
+```
+
+### Запуск Redis (локально)
+Если Redis установлен:
+```bash
+redis-server
+```
+
+Или через Docker:
+```bash
+docker run --name redis -p 6379:6379 -d redis:7
+```
+
+### Запуск Celery worker
+Windows (PowerShell/CMD):
+```bash
+celery -A config worker -l info -P solo
+```
+
+Linux/Mac:
+```bash
+celery -A config worker -l info
+```
+
+### Запуск Celery beat (планировщик)
+Отдельным процессом:
+```bash
+celery -A config beat -l info
+```
+
+### Как проверить что всё работает
+- Worker логида `apps.order.tasks.expire_stale_master_offers` va `apps.accounts.tasks.check_pending_payments` tasklari chiqib turadi
+- Admin panelda `PaymentTransaction` statuslari `pending → paid/failed` bo‘lib o‘zgaradi
+
 ## Лицензия
 
 Этот проект распространяется под лицензией MIT.

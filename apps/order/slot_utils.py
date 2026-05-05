@@ -47,11 +47,18 @@ def build_slots_for_master_on_date(master, check_date) -> list[dict]:
         })
         current_hour, current_minute = next_hour, next_minute
 
+    busy_statuses = [
+        OrderStatus.PENDING,
+        OrderStatus.ACCEPTED,
+        OrderStatus.ON_THE_WAY,
+        OrderStatus.ARRIVED,
+        OrderStatus.IN_PROGRESS,
+    ]
     existing_orders = Order.objects.filter(
         master=master,
         order_type=OrderType.SCHEDULED,
         scheduled_date=check_date,
-        status__in=[OrderStatus.PENDING, OrderStatus.IN_PROGRESS],
+        status__in=busy_statuses,
     )
 
     for slot in slots:

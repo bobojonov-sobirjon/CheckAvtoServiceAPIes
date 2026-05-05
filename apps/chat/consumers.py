@@ -1,7 +1,10 @@
+import base64
 import json
+import uuid
 from channels.generic.websocket import AsyncWebsocketConsumer
 from channels.db import database_sync_to_async
 from django.contrib.auth import get_user_model
+from django.core.files.base import ContentFile
 from .models import ChatRoom, ChatMessage
 
 User = get_user_model()
@@ -75,16 +78,34 @@ class ChatConsumer(AsyncWebsocketConsumer):
             print(f"[DEBUG] Message type: {message_type}")
             
             if message_type == 'chat_message':
-                # Сохраняем сообщение в БД
+                # Вариант 1: broadcast существующего сообщения (REST upload → WS)
+                msg_id = data.get('message_id')
+                if msg_id:
+                    message = await self.get_message_if_allowed(msg_id)
+                    if not message:
+                        await self.send(text_data=json.dumps({'type': 'error', 'message': 'Message not found / not allowed'}))
+                        return
+                    await self.channel_layer.group_send(
+                        self.room_group_name,
+                        {'type': 'chat_message', 'message': await self.message_to_dict(message)},
+                    )
+                    return
+
+                # Вариант 2: gallery/batch images (images: [{name, base64}, ...])
+                images = data.get('images')
+                if isinstance(images, list) and images:
+                    messages = await self.save_gallery_images(data)
+                    await self.channel_layer.group_send(
+                        self.room_group_name,
+                        {'type': 'chat_message_batch', 'messages': [await self.message_to_dict(m) for m in messages]},
+                    )
+                    return
+
+                # Вариант 3: single message (text / file / image / audio via base64)
                 message = await self.save_message(data)
-                
-                # Отправляем сообщение всем в группе
                 await self.channel_layer.group_send(
                     self.room_group_name,
-                    {
-                        'type': 'chat_message',
-                        'message': await self.message_to_dict(message)
-                    }
+                    {'type': 'chat_message', 'message': await self.message_to_dict(message)},
                 )
             
             elif message_type == 'typing':
@@ -131,10 +152,30 @@ class ChatConsumer(AsyncWebsocketConsumer):
     
     async def chat_message(self, event):
         """Отправка сообщения в WebSocket"""
+        msg = event.get('message') or {}
+        try:
+            sender_id = (msg.get('sender') or {}).get('id')
+            sender_type = 'initiator' if sender_id == self.user.id else 'receiver'
+            msg = {**msg, 'sender_type': sender_type}
+        except Exception:
+            msg = {**msg, 'sender_type': 'initiator'}
         await self.send(text_data=json.dumps({
             'type': 'chat_message',
-            'message': event['message']
+            'message': msg
         }))
+
+    async def chat_message_batch(self, event):
+        """Batch/gallery: Отправка нескольких сообщений"""
+        raw = event.get('messages') or []
+        out = []
+        for msg in raw:
+            try:
+                sender_id = (msg.get('sender') or {}).get('id')
+                sender_type = 'initiator' if sender_id == self.user.id else 'receiver'
+                out.append({**msg, 'sender_type': sender_type})
+            except Exception:
+                out.append({**msg, 'sender_type': 'initiator'})
+        await self.send(text_data=json.dumps({'type': 'chat_message_batch', 'messages': out}))
     
     async def typing_indicator(self, event):
         """Отправка индикатора набора текста"""
@@ -177,15 +218,78 @@ class ChatConsumer(AsyncWebsocketConsumer):
     def save_message(self, data):
         """Сохранение сообщения в БД"""
         room = ChatRoom.objects.get(id=self.room_id)
+        msg_type = (data.get('message_type') or 'text').strip() or 'text'
+        text = data.get('text') or ''
+
+        # WS base64 attachments support
+        file_cf = None
+        img_cf = None
+        audio_cf = None
+
+        def _decode_b64(b64: str) -> bytes:
+            # support "data:...;base64,...."
+            if ',' in b64 and b64.strip().lower().startswith('data:'):
+                b64 = b64.split(',', 1)[1]
+            return base64.b64decode(b64)
+
+        if msg_type == 'image' and data.get('image_base64'):
+            name = (data.get('image_name') or f'{uuid.uuid4().hex}.jpg').strip()
+            img_cf = ContentFile(_decode_b64(str(data.get('image_base64'))), name=name)
+        elif msg_type == 'file' and data.get('file_base64'):
+            name = (data.get('file_name') or f'{uuid.uuid4().hex}.bin').strip()
+            file_cf = ContentFile(_decode_b64(str(data.get('file_base64'))), name=name)
+        elif msg_type == 'audio' and data.get('audio_base64'):
+            name = (data.get('audio_name') or f'{uuid.uuid4().hex}.mp3').strip()
+            audio_cf = ContentFile(_decode_b64(str(data.get('audio_base64'))), name=name)
+
         message = ChatMessage.objects.create(
             room=room,
             sender=self.user,
-            message_type=data.get('message_type', 'text'),
-            text=data.get('text', '')
+            message_type=msg_type,
+            text=text,
+            file=file_cf,
+            image=img_cf,
+            audio=audio_cf,
         )
         # Обновляем время последнего обновления комнаты
         room.save()
         return message
+
+    @database_sync_to_async
+    def save_gallery_images(self, data):
+        """Сохранить несколько изображений (WS gallery) как несколько ChatMessage."""
+        room = ChatRoom.objects.get(id=self.room_id)
+        text = data.get('text') or ''
+        images = data.get('images') or []
+
+        def _decode_b64(b64: str) -> bytes:
+            if ',' in b64 and b64.strip().lower().startswith('data:'):
+                b64 = b64.split(',', 1)[1]
+            return base64.b64decode(b64)
+
+        out = []
+        for it in images[:10]:
+            if not isinstance(it, dict):
+                continue
+            b64 = it.get('base64')
+            if not b64:
+                continue
+            name = (it.get('name') or f'{uuid.uuid4().hex}.jpg').strip()
+            img_cf = ContentFile(_decode_b64(str(b64)), name=name)
+            out.append(ChatMessage.objects.create(room=room, sender=self.user, message_type='image', text=text, image=img_cf))
+        room.save()
+        return out
+
+    @database_sync_to_async
+    def get_message_if_allowed(self, message_id):
+        """Получить сообщение по id, если оно принадлежит этой комнате."""
+        try:
+            msg = ChatMessage.objects.select_related('room', 'sender').get(id=message_id)
+        except ChatMessage.DoesNotExist:
+            return None
+        if str(msg.room_id) != str(self.room_id):
+            return None
+        return msg
     
     @database_sync_to_async
     def message_to_dict(self, message):
@@ -199,7 +303,6 @@ class ChatConsumer(AsyncWebsocketConsumer):
                 'email': message.sender.email,
                 'avatar': message.sender.avatar.url if message.sender.avatar else None
             },
-            'sender_type': 'initiator',  # WebSocket'da yuboruvchi doim initiator
             'message_type': message.message_type,
             'text': message.text,
             'file': message.file.url if message.file else None,

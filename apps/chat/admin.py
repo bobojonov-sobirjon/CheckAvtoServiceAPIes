@@ -2,6 +2,13 @@ from django.contrib import admin
 from .models import ChatRoom, ChatMessage
 
 
+class ChatMessageInline(admin.TabularInline):
+    model = ChatMessage
+    extra = 0
+    fields = ('sender', 'message_type', 'text', 'is_read', 'created_at')
+    readonly_fields = ('created_at',)
+
+
 @admin.register(ChatRoom)
 class ChatRoomAdmin(admin.ModelAdmin):
     list_display = ['id', 'get_participants', 'created_at', 'updated_at']
@@ -9,6 +16,7 @@ class ChatRoomAdmin(admin.ModelAdmin):
     search_fields = ['participants__email', 'participants__first_name', 'participants__last_name']
     filter_horizontal = ['participants']
     readonly_fields = ['created_at', 'updated_at']
+    inlines = [ChatMessageInline]
     
     def get_participants(self, obj):
         return ', '.join([p.get_full_name() or p.email for p in obj.participants.all()])
@@ -22,6 +30,10 @@ class ChatMessageAdmin(admin.ModelAdmin):
     search_fields = ['text', 'sender__email', 'sender__first_name', 'sender__last_name']
     readonly_fields = ['created_at']
     list_per_page = 50
+
+    def has_module_permission(self, request):
+        """Скрываем из меню (управляется inline в ChatRoom)."""
+        return False
     
     def sender_name(self, obj):
         return obj.sender.get_full_name() or obj.sender.email

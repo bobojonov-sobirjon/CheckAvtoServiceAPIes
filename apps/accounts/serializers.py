@@ -2,7 +2,7 @@ from rest_framework import serializers
 from django.core.exceptions import ValidationError
 from decimal import Decimal, ROUND_HALF_UP
 import re
-from .models import CustomUser, FAQ
+from .models import CustomUser, FAQ, UserDevice
 
 MIN_SBP_TOPUP_RUB = Decimal('5')
 
@@ -257,6 +257,13 @@ class SMSResponseSerializer(serializers.Serializer):
     
     class Meta:
         fields = ['success', 'message', 'phone']
+
+
+class UserDeviceSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = UserDevice
+        fields = ['id', 'user', 'device_token', 'device_type', 'is_active', 'created_at', 'updated_at']
+        read_only_fields = ['id', 'user', 'created_at', 'updated_at']
 
 
 class UserDetailsSerializer(serializers.ModelSerializer):
@@ -610,4 +617,15 @@ class AlfaOrderStatusExtendedSerializer(serializers.Serializer):
         return attrs
 
 
+class OwnerTopUpMasterBalanceSerializer(serializers.Serializer):
+    """Owner: пополнить баланс мастера через Alfa dynamic order."""
+
+    master_id = serializers.IntegerField()
+    price = serializers.DecimalField(max_digits=12, decimal_places=2, min_value=Decimal('1000'))
+
+
+class MasterWithdrawSerializer(serializers.Serializer):
+    """Мастер: заявка на вывод с доступного баланса (сумма резервируется сразу)."""
+
+    price = serializers.DecimalField(max_digits=12, decimal_places=2, min_value=Decimal('0.01'))
 

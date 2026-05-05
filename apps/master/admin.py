@@ -40,6 +40,47 @@ class MasterServiceItemsInline(admin.TabularInline):
         return super().formfield_for_foreignkey(db_field, request, **kwargs)
 
 
+class MasterServiceInlineForm(forms.ModelForm):
+    """
+    В MasterService нет редактируемых полей, но объект нужен как контейнер для MasterServiceItems.
+    Делаем скрытый маркер, чтобы Django admin считал inline-форму изменённой и сохранял новый объект.
+    """
+
+    create_marker = forms.BooleanField(required=False, initial=True, widget=forms.HiddenInput())
+
+    class Meta:
+        model = MasterService
+        fields = ('create_marker',)
+
+    def has_changed(self):
+        # Force create for new inline row
+        if self.instance and self.instance.pk is None:
+            return True
+        return super().has_changed()
+
+
+class MasterServiceInline(admin.TabularInline):
+    """Инлайн-контейнер для услуг мастера (чтобы потом добавлять items внутри MasterService)."""
+    model = MasterService
+    form = MasterServiceInlineForm
+    extra = 1
+    show_change_link = True
+    can_delete = True
+    verbose_name = 'Услуга мастера'
+    verbose_name_plural = 'Услуги мастера'
+    fields = ('created_at',)
+    readonly_fields = ('created_at',)
+
+
+class MasterEmployeeInline(admin.TabularInline):
+    """Инлайн для сотрудников мастерской"""
+    model = MasterEmployee
+    extra = 0
+    autocomplete_fields = ('employee',)
+    readonly_fields = ('added_at',)
+    fields = ('employee', 'added_at')
+
+
 @admin.register(Master)
 class MasterAdmin(admin.ModelAdmin):
     """Админка для мастеров"""
@@ -60,6 +101,7 @@ class MasterAdmin(admin.ModelAdmin):
         'name', 'city'
     ]
     ordering = ['-created_at']
+    inlines = [MasterServiceInline, MasterEmployeeInline]
     
     fieldsets = (
         ('Пользователь', {
@@ -108,6 +150,25 @@ class MasterServiceAdmin(admin.ModelAdmin):
     def items_count(self, obj):
         return obj.master_service_items.count()
     items_count.short_description = 'Количество элементов'
+    
+    def has_module_permission(self, request):
+        """Скрываем из меню (управляется inline в Master)."""
+        return False
+
+
+@admin.register(MasterServiceItems)
+class MasterServiceItemsAdmin(admin.ModelAdmin):
+    """
+    Нужен для autocomplete_fields в OrderServiceInline.
+    В меню скрыт — управляется через MasterService inline.
+    """
+
+    search_fields = ('name', 'master_service__master__user__email', 'master_service__master__name')
+    list_display = ('id', 'name', 'master_service', 'category', 'price_from', 'price_to', 'created_at')
+    list_filter = ('category', 'created_at')
+
+    def has_module_permission(self, request):
+        return False
 
 
 @admin.register(MasterEmployee)
@@ -122,4 +183,8 @@ class MasterEmployeeAdmin(admin.ModelAdmin):
         if obj:  # При редактировании
             return self.readonly_fields + ('master', 'employee')
         return self.readonly_fields
+
+    def has_module_permission(self, request):
+        """Скрываем из меню (управляется inline в Master)."""
+        return False
 
