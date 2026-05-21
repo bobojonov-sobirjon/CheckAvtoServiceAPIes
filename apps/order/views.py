@@ -2168,6 +2168,91 @@ class OrderWorkCompletionImagesView(APIView):
 
     permission_classes = [IsAuthenticated, IsMaster]
 
+    @extend_schema(
+        summary='Мастер: загрузить фото выполненной работы',
+        description="""
+Загрузка фото выполненной работы перед завершением заказа (**POST .../complete/**).
+
+**Формат:** `multipart/form-data`
+- **`images`** — один или несколько файлов (повторите поле `images` для каждого файла), максимум **15** за запрос.
+- Форматы: JPG, PNG, GIF, WEBP.
+
+**Пример (curl):**
+```bash
+curl -X POST "https://api.example.com/api/order/5/work-completion-images/" \\
+  -H "Authorization: Bearer TOKEN" \\
+  -F "images=@photo1.jpg" \\
+  -F "images=@photo2.jpg"
+```
+        """,
+        tags=['Orders (Master) · Workflow'],
+        parameters=[
+            OpenApiParameter(
+                name='order_id',
+                type=OpenApiTypes.INT,
+                location=OpenApiParameter.PATH,
+                description='ID заказа',
+                required=True,
+            ),
+        ],
+        request={
+            'multipart/form-data': {
+                'type': 'object',
+                'properties': {
+                    'images': {
+                        'type': 'array',
+                        'items': {'type': 'string', 'format': 'binary'},
+                        'description': 'Фото выполненной работы (1–15 файлов)',
+                    },
+                },
+                'required': ['images'],
+            },
+        },
+        responses={
+            201: {
+                'description': 'Фото сохранены',
+                'content': {
+                    'application/json': {
+                        'example': {
+                            'message': 'Фото сохранены',
+                            'image_ids': [1, 2, 3],
+                        },
+                    },
+                },
+            },
+            400: {
+                'description': 'Нет файлов или больше 15',
+                'content': {
+                    'application/json': {
+                        'examples': {
+                            'no_files': {
+                                'value': {'error': 'Передайте файлы в поле images (multipart)'},
+                            },
+                            'too_many': {
+                                'value': {'error': 'Не более 15 файлов за один запрос'},
+                            },
+                        },
+                    },
+                },
+            },
+            403: {
+                'description': 'Не мастер или заказ другому мастеру',
+                'content': {
+                    'application/json': {
+                        'example': {'error': 'Этот заказ назначен другому мастеру'},
+                    },
+                },
+            },
+            404: {
+                'description': 'Заказ не найден',
+                'content': {
+                    'application/json': {
+                        'example': {'error': 'Заказ не найден'},
+                    },
+                },
+            },
+        },
+    )
     def post(self, request, order_id):
         master = request.user.master_profiles.first()
         if not master:

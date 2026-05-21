@@ -12,6 +12,7 @@ from .api.views import (
     MasterAvailableBalanceView,
     MasterWithdrawalCreateView,
     MasterWithdrawalListView,
+    PaymentHistoryView,
     UserDeviceListCreateView,
     UserDeviceDetailView,
 )
@@ -47,6 +48,7 @@ urlpatterns = [
     path('balance/master-available/', MasterAvailableBalanceView.as_view(), name='balance_master_available'),
     path('balance/master-withdraw/', MasterWithdrawalCreateView.as_view(), name='balance_master_withdraw'),
     path('balance/master-withdrawals/', MasterWithdrawalListView.as_view(), name='balance_master_withdrawals'),
+    path('balance/payment-history/', PaymentHistoryView.as_view(), name='balance_payment_history'),
 
     # Push devices
     path('devices/', UserDeviceListCreateView.as_view(), name='user_devices'),

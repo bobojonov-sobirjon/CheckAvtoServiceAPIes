@@ -5,6 +5,7 @@ from zoneinfo import ZoneInfo
 
 from django.conf import settings
 from django.db import transaction
+from django.db.models import Q
 from django.utils import timezone
 from rest_framework.views import APIView
 from rest_framework.permissions import AllowAny, IsAuthenticated
@@ -1280,6 +1281,169 @@ class MasterWithdrawalListView(APIView):
             for w in qs
         ]
         return Response({'results': results})
+
+
+def _payment_history_item_from_tx(tx, *, user_id: int) -> dict:
+    intent = tx.intent
+    return {
+        'record_type': 'payment_transaction',
+        'transaction_id': tx.id,
+        'kind': tx.kind,
+        'status': tx.status,
+        'intent_status': intent.status if intent else None,
+        'amount': str(tx.amount),
+        'intent_id': str(tx.intent_id),
+        'order_id': tx.order_id,
+        'master_id': tx.master_id,
+        'alfa_order_id': tx.alfa_order_id or '',
+        'alfa_order_number': tx.alfa_order_number or '',
+        'form_url': tx.form_url or '',
+        'initiated_by_me': tx.initiated_by_id == user_id,
+        'beneficiary_me': tx.beneficiary_id == user_id,
+        'created_at': intent.created_at.isoformat() if intent else tx.created_at.isoformat(),
+        'completed_at': intent.completed_at.isoformat() if intent and intent.completed_at else None,
+        'updated_at': tx.updated_at.isoformat(),
+    }
+
+
+def _payment_history_item_from_intent(intent) -> dict:
+    return {
+        'record_type': 'balance_topup',
+        'transaction_id': None,
+        'kind': 'balance_topup',
+        'status': intent.status,
+        'intent_status': intent.status,
+        'amount': str(intent.amount),
+        'intent_id': str(intent.id),
+        'order_id': None,
+        'master_id': None,
+        'alfa_order_id': '',
+        'alfa_order_number': '',
+        'form_url': '',
+        'initiated_by_me': True,
+        'beneficiary_me': True,
+        'bank_reference': intent.bank_reference or '',
+        'created_at': intent.created_at.isoformat(),
+        'completed_at': intent.completed_at.isoformat() if intent.completed_at else None,
+        'updated_at': None,
+    }
+
+
+class PaymentHistoryView(APIView):
+    """
+    История платежей текущего пользователя: пополнения баланса (СБП intent),
+    оплаты заказов и пополнения мастера (Owner), где пользователь — получатель или инициатор.
+    """
+
+    permission_classes = [IsAuthenticated]
+
+    @extend_schema(
+        summary='История платежей (мобильное приложение)',
+        description=(
+            'Объединяет `PaymentTransaction` (заказы, Alfa master-topup) и `SbpPaymentIntent` '
+            'без транзакции (пополнение гарантийного баланса через POST .../sbp-qr/). '
+            'Списания с баланса (комиссия accept, штраф cancel) здесь **не** отображаются.'
+        ),
+        tags=['Payments'],
+        parameters=[
+            OpenApiParameter(
+                name='kind',
+                type=OpenApiTypes.STR,
+                location=OpenApiParameter.QUERY,
+                description='balance_topup | order | master_topup',
+                required=False,
+            ),
+            OpenApiParameter(
+                name='status',
+                type=OpenApiTypes.STR,
+                location=OpenApiParameter.QUERY,
+                description='pending | paid | failed | completed | expired (фильтр по status записи)',
+                required=False,
+            ),
+            OpenApiParameter(
+                name='limit',
+                type=OpenApiTypes.INT,
+                location=OpenApiParameter.QUERY,
+                description='Макс. записей после объединения (по умолчанию 50, макс. 100)',
+                required=False,
+            ),
+        ],
+        responses={
+            200: {
+                'type': 'object',
+                'properties': {
+                    'success': {'type': 'boolean'},
+                    'count': {'type': 'integer'},
+                    'balance': {
+                        'type': 'object',
+                        'properties': {
+                            'amount': {'type': 'string'},
+                            'updated_at': {'type': 'string', 'format': 'date-time'},
+                        },
+                    },
+                    'results': {'type': 'array', 'items': {'type': 'object'}},
+                },
+            },
+        },
+    )
+    def get(self, request):
+        user = request.user
+        kind_filter = (request.query_params.get('kind') or '').strip().lower()
+        status_filter = (request.query_params.get('status') or '').strip().lower()
+        try:
+            limit = min(max(int(request.query_params.get('limit', 50)), 1), 100)
+        except (TypeError, ValueError):
+            limit = 50
+
+        tx_qs = (
+            PaymentTransaction.objects.filter(Q(beneficiary=user) | Q(initiated_by=user))
+            .select_related('intent', 'order', 'master')
+            .order_by('-created_at')
+        )
+        if kind_filter in ('order', 'master_topup'):
+            tx_qs = tx_qs.filter(kind=kind_filter)
+        elif kind_filter == 'balance_topup':
+            tx_qs = tx_qs.none()
+
+        if status_filter in ('pending', 'paid', 'failed'):
+            tx_qs = tx_qs.filter(status=status_filter)
+        elif status_filter in ('completed', 'expired'):
+            tx_qs = tx_qs.none()
+
+        tx_list = list(tx_qs[:limit])
+        intent_ids_with_tx = {tx.intent_id for tx in tx_list}
+
+        intent_qs = SbpPaymentIntent.objects.filter(user=user).order_by('-created_at')
+        if kind_filter and kind_filter != 'balance_topup':
+            intent_qs = intent_qs.none()
+        if status_filter in ('pending', 'completed', 'expired'):
+            intent_qs = intent_qs.filter(status=status_filter)
+        elif status_filter in ('paid', 'failed'):
+            intent_qs = intent_qs.none()
+
+        intent_list = [
+            i for i in intent_qs[: limit * 2]
+            if i.pk not in intent_ids_with_tx
+        ]
+
+        items = [_payment_history_item_from_tx(tx, user_id=user.id) for tx in tx_list]
+        items.extend(_payment_history_item_from_intent(i) for i in intent_list)
+        items.sort(key=lambda x: x['created_at'], reverse=True)
+        items = items[:limit]
+
+        ub = UserBalance.get_or_create_balance(user)
+        return Response(
+            {
+                'success': True,
+                'count': len(items),
+                'balance': {
+                    'amount': str(ub.amount),
+                    'updated_at': ub.updated_at.isoformat(),
+                },
+                'results': items,
+            },
+            status=status.HTTP_200_OK,
+        )
 
 
 def _save_alfa_sbp_template_snapshot(user, gw: dict, generated: dict | None = None) -> None:
